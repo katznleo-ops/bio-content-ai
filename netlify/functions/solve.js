@@ -24,68 +24,71 @@ export default async (request) => {
     return Response.json({ error: "Image is too large" }, { status: 413 });
   }
 
-  const baseUrl = process.env.OPENAI_BASE_URL;
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!baseUrl || !apiKey) {
-    return Response.json({
-      error: "Netlify AI Gateway is not configured"
-    }, { status: 500 });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return Response.json({ error: "Gemini API is not configured" }, { status: 500 });
   }
 
-  const model = process.env.AI_GATEWAY_MODEL || "gpt-5-mini";
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   try {
     const aiResponse = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
       },
       body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        max_tokens: 2000,
-        messages: [
-          {
-            role: "system",
-            content: "You are helping a student read and answer a biology essential-content worksheet. Read the image carefully. Return a complete, well-organized answer in the worksheet's expected format. If a blank cannot be read, say that it is unclear. Do not invent text."
-          },
+        systemInstruction: {
+          parts: [
+            {
+              text: "You are helping a student read and answer a biology essential-content worksheet. Read the image carefully. Return a complete, well-organized answer in the worksheet's expected format. If a blank cannot be read, say that it is unclear. Do not invent text."
+            }
+          ]
+        },
+        contents: [
           {
             role: "user",
-            content: [
+            parts: [
               {
-                type: "text",
                 text: "Read this worksheet, identify every question or prompt, and provide concise answers."
               },
               {
-                type: "image_url",
-                image_url: {
-                  url: `data:${image.mimeType};base64,${image.data}`
+                inlineData: {
+                  mimeType: image.mimeType,
+                  data: image.data
                 }
               }
             ]
           }
-        ]
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 2000
+        }
       })
     });
 
     const data = await aiResponse.json().catch(() => null);
 
     if (!aiResponse.ok) {
-      const gatewayMessage = data?.error?.message || data?.message || "AI request failed";
-      return Response.json({ error: gatewayMessage }, { status: 502 });
+      console.error("Gemini API returned an error", aiResponse.status);
+      return Response.json({ error: "Gemini could not process this image" }, { status: 502 });
     }
 
-    const answer = data?.choices?.[0]?.message?.content?.trim();
+    const answer = data?.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || "")
+      .join("")
+      .trim();
+
     if (!answer) {
-      return Response.json({ error: "The AI returned no answer" }, { status: 502 });
+      return Response.json({ error: "Gemini returned no answer" }, { status: 502 });
     }
 
     return Response.json({ answer });
   } catch (error) {
-    console.error("AI Gateway request failed", error);
-    return Response.json({ error: "Unable to contact the AI service" }, { status: 502 });
+    console.error("Gemini API request failed", error);
+    return Response.json({ error: "Unable to contact Gemini" }, { status: 502 });
   }
 };
