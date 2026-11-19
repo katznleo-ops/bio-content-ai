@@ -1,6 +1,16 @@
+const allowedOrigin = "https://katznleo-ops.github.io";
+
 export default async function handler(request, response) {
+  response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (request.method === "OPTIONS") {
+    return response.status(204).end();
+  }
+
   if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
+    response.setHeader("Allow", "POST, OPTIONS");
     return response.status(405).json({ error: "Method not allowed" });
   }
 
@@ -14,7 +24,6 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: "Unsupported image type" });
   }
 
-  // Vercel request limits require a conservative file-size limit.
   if (image.data.length > 4.5 * 1024 * 1024) {
     return response.status(413).json({ error: "Image is too large" });
   }
