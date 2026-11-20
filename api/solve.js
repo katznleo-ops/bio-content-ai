@@ -4,6 +4,7 @@ export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Vary", "Origin");
 
   if (request.method === "OPTIONS") {
     return response.status(204).end();
@@ -14,18 +15,16 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: "Method not allowed" });
   }
 
-  const image = request.body?.image;
-  if (!image?.data || !image?.mimeType) {
-    return response.status(400).json({ error: "An image is required" });
+  const prompt = typeof request.body?.prompt === "string"
+    ? request.body.prompt.trim()
+    : "";
+
+  if (!prompt) {
+    return response.status(400).json({ error: "Please enter a question" });
   }
 
-  const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-  if (!allowedTypes.has(image.mimeType)) {
-    return response.status(400).json({ error: "Unsupported image type" });
-  }
-
-  if (image.data.length > 4.5 * 1024 * 1024) {
-    return response.status(413).json({ error: "Image is too large" });
+  if (prompt.length > 8000) {
+    return response.status(413).json({ error: "Question must be 8,000 characters or fewer" });
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -34,7 +33,10 @@ export default async function handler(request, response) {
   }
 
   const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const endpoint =
+    "https://generativelanguage.googleapis.com/v1beta/models/" +
+    encodeURIComponent(model) +
+    ":generateContent";
 
   try {
     const aiResponse = await fetch(endpoint, {
@@ -46,15 +48,12 @@ export default async function handler(request, response) {
       body: JSON.stringify({
         systemInstruction: {
           parts: [{
-            text: "You are helping a student read and answer a biology essential-content worksheet. Read the image carefully. Identify every question or prompt and provide a complete, concise, well-organized answer."
+            text: "You are a helpful biology tutor. Answer the student's question accurately and clearly. Explain concepts in student-friendly language."
           }]
         },
         contents: [{
           role: "user",
-          parts: [
-            { text: "Read this worksheet, identify every question or prompt, and provide concise answers." },
-            { inlineData: { mimeType: image.mimeType, data: image.data } }
-          ]
+          parts: [{ text: prompt }]
         }],
         generationConfig: {
           temperature: 0.2,
@@ -66,8 +65,14 @@ export default async function handler(request, response) {
     const data = await aiResponse.json().catch(() => null);
 
     if (!aiResponse.ok) {
-      console.error("Gemini API returned an error", aiResponse.status);
-      return response.status(502).json({ error: "Gemini could not process this image" });
+      console.error("Gemini API returned an error", {
+        status: aiResponse.status,
+        model,
+        details: data?.error?.message || "No error details returned"
+      });
+      return response.status(502).json({
+        error: "Gemini could not answer this question"
+      });
     }
 
     const answer = data?.candidates?.[0]?.content?.parts
