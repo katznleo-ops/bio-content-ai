@@ -76,11 +76,17 @@
 
   <div id="output" role="status" aria-live="polite">Answers will appear here...</div>
 
+
   <script>
+    // Replaces the <script> block at the bottom of index.html.
+    const BUILD = "text-v2"; // bump on every commit; check with: document.querySelector("script").textContent.includes('text-v2')
+    const API_URL = "https://bio-content-ai.vercel.app/api/solve";
+
     const questionForm = document.getElementById("questionForm");
     const questionInput = document.getElementById("question");
     const askButton = document.getElementById("askButton");
     const output = document.getElementById("output");
+    console.info("[bio] page build", BUILD);
 
     questionForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -91,27 +97,37 @@
       askButton.textContent = "Thinking...";
       output.textContent = "Getting an answer...";
 
+      let response;
       try {
-        const response = await fetch("https://bio-content-ai.vercel.app/api/solve", {
+        response = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt })
         });
-
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.error || `Server error (${response.status})`);
-        }
-        if (!data.answer) throw new Error("The AI returned no answer.");
-        output.textContent = data.answer;
-      } catch (error) {
-        console.error("Question processing failed:", error);
-        output.textContent = error.message || "Unable to get an answer. Please try again.";
-      } finally {
+      } catch (err) {
+        // fetch() only rejects on network/CORS failure — the server's status is not visible here.
+        console.error("[bio] network or CORS failure", err);
+        output.textContent = "Could not reach the server (network or CORS). Check the console.";
         askButton.disabled = false;
         askButton.textContent = "Get Answer";
+        return;
       }
+
+      const data = await response.json().catch(() => ({}));
+      console.info("[bio] api", response.status, "commit", response.headers.get("X-Solve-Commit"), data);
+
+      if (response.ok && data.answer) {
+        output.textContent = data.answer;
+      } else {
+        const detail = [data.code, data.reason, data.finishReason].filter(Boolean).join(" / ");
+        output.textContent = (data.error || `Server error (${response.status})`) + (detail ? ` [${detail}]` : "");
+      }
+
+      askButton.disabled = false;
+      askButton.textContent = "Get Answer";
     });
   </script>
+
+
 </body>
 </html>
