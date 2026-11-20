@@ -31,7 +31,7 @@ export default async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(204).end();
 
-  const model = cleanModel(process.env.GEMINI_MODEL);
+  const model = "gemini-3.7-flash";
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
 
   // Safe diagnostics: never returns the key, only whether one exists.
