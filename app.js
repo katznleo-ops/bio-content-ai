@@ -73,6 +73,15 @@
     showChat();
     closeSidebar();
   }
+  function iconButton(name, path) {
+    const button = document.createElement('button');
+    button.className = `history-action history-action-${name}`;
+    button.type = 'button';
+    button.title = name === 'rename' ? 'Rename conversation' : 'Delete conversation';
+    button.setAttribute('aria-label', `${name === 'rename' ? 'Rename' : 'Delete'} conversation`);
+    button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${path}</svg>`;
+    return button;
+  }
   function renderHistory() {
     const query = els.historySearch.value.trim().toLowerCase();
     const items = conversations.filter((chat) => chat.title.toLowerCase().includes(query));
@@ -86,33 +95,57 @@
       const title = document.createElement('span');
       title.className = 'history-item-title';
       title.textContent = chat.title;
-      const menu = document.createElement('button');
-      menu.className = 'history-item-menu';
-      menu.type = 'button';
-      menu.title = 'Conversation options';
-      menu.setAttribute('aria-label', `Options for ${chat.title}`);
-      menu.textContent = '•••';
-      menu.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const action = window.prompt('Type “rename” to rename this chat, or “delete” to remove it.', 'rename');
-        if (action?.toLowerCase() === 'delete') deleteConversation(chat.id);
-        else if (action?.toLowerCase() === 'rename') {
-          const renamed = window.prompt('Conversation name:', chat.title);
-          if (renamed?.trim()) { chat.title = renamed.trim().slice(0, 70); chat.updatedAt = Date.now(); persist(); }
-        }
-      });
-      row.append(title, menu);
+      const actions = document.createElement('span');
+      actions.className = 'history-item-actions';
+      const rename = iconButton('rename', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>');
+      const remove = iconButton('delete', '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/>');
+      rename.addEventListener('click', (event) => { event.stopPropagation(); openRenameDialog(chat); });
+      remove.addEventListener('click', (event) => { event.stopPropagation(); confirmDelete(chat); });
+      actions.append(rename, remove);
+      row.append(title, actions);
       row.addEventListener('click', () => selectConversation(chat.id));
-      row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectConversation(chat.id); } });
+      row.addEventListener('keydown', (event) => {
+        if (event.target !== row) return;
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectConversation(chat.id); }
+      });
       els.history.append(row);
     }
     els.emptyHistory.hidden = items.length > 0;
     els.emptyHistory.textContent = query ? 'No conversations match that search.' : 'Your conversations will show up here.';
   }
-  function deleteConversation(id) {
-    conversations = conversations.filter((chat) => chat.id !== id);
-    if (activeId === id) { activeId = ''; showDashboard(); }
+  function confirmDelete(chat) {
+    if (!window.confirm(`Delete “${chat.title}”? This cannot be undone.`)) return;
+    conversations = conversations.filter((item) => item.id !== chat.id);
+    if (activeId === chat.id) { activeId = ''; showDashboard(); }
     persist();
+    showToast('Conversation deleted.');
+  }
+  function openRenameDialog(chat) {
+    let dialog = $('#renameDialog');
+    if (!dialog) {
+      dialog = document.createElement('dialog');
+      dialog.id = 'renameDialog';
+      dialog.className = 'rename-dialog';
+      dialog.innerHTML = '<form method="dialog" id="renameForm"><label for="renameInput">Conversation name</label><input id="renameInput" maxlength="70" required><div class="rename-actions"><button class="rename-cancel" value="cancel">Cancel</button><button class="rename-save" id="renameSave" value="save">Save name</button></div></form>';
+      document.body.append(dialog);
+      dialog.querySelector('form').addEventListener('submit', (event) => {
+        if (event.submitter?.value !== 'save') return;
+        event.preventDefault();
+        const name = dialog.querySelector('#renameInput').value.trim();
+        if (!name || !dialog._conversation) return;
+        dialog._conversation.title = name;
+        dialog._conversation.updatedAt = Date.now();
+        persist();
+        dialog.close();
+        showToast('Conversation renamed.');
+      });
+      dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    }
+    dialog._conversation = chat;
+    dialog.querySelector('#renameInput').value = chat.title;
+    dialog.showModal();
+    dialog.querySelector('#renameInput').focus();
+    dialog.querySelector('#renameInput').select();
   }
   function clearHistory() {
     if (!conversations.length) return showToast('There are no saved conversations yet.');
@@ -187,8 +220,7 @@
     persist();
     els.title.textContent = chat.title;
     busy = true;
-    const form = els.chatForm;
-    const submit = form.querySelector('button[type="submit"]');
+    const submit = els.chatForm.querySelector('button[type="submit"]');
     submit.disabled = true;
     const typing = showTyping();
     try {
@@ -222,6 +254,24 @@
     els.toast.textContent = message; els.toast.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2500);
   }
+  function buildLandingParallax() {
+    const welcome = els.welcome;
+    if (!welcome || welcome.querySelector('.parallax-panel')) return;
+    const first = document.createElement('section');
+    first.className = 'parallax-panel parallax-study';
+    first.innerHTML = '<div class="parallax-caption"><span class="tiny-label">FOLLOW YOUR CURIOSITY</span><h2>Every subject has a story.</h2><p>Take a closer look, ask one more question, and let understanding build at your own pace.</p></div>';
+    const second = document.createElement('section');
+    second.className = 'parallax-panel parallax-ideas';
+    second.innerHTML = '<div class="parallax-caption"><span class="tiny-label">SMALL STEPS. BIG “AHA!” MOMENTS.</span><h2>Learn something new today.</h2><p>Bring the question. We’ll work through the ideas together.</p><button class="button button-dark parallax-cta" type="button">Open my study space <span aria-hidden="true">→</span></button></div>';
+    const features = welcome.querySelector('.welcome-bottom');
+    const footer = welcome.querySelector('.welcome-footer');
+    welcome.insertBefore(first, features);
+    welcome.insertBefore(second, footer);
+    second.querySelector('button').addEventListener('click', enterApp);
+    const styles = document.createElement('link');
+    styles.rel = 'stylesheet'; styles.href = 'enhancements.css';
+    document.head.append(styles);
+  }
   function enterApp() {
     els.welcome.hidden = true; els.app.hidden = false;
     const saved = conversations.find((chat) => chat.id === activeId);
@@ -232,6 +282,7 @@
   function openSidebar() { els.sidebar.classList.add('open'); els.scrim.classList.add('visible'); }
   function closeSidebar() { els.sidebar.classList.remove('open'); els.scrim.classList.remove('visible'); }
 
+  buildLandingParallax();
   $('#startLearning').addEventListener('click', enterApp);
   $('#enterFromNav').addEventListener('click', enterApp);
   $('#homeButton').addEventListener('click', goHome);
@@ -241,7 +292,10 @@
   $('#closeSidebar').addEventListener('click', closeSidebar);
   els.scrim.addEventListener('click', closeSidebar);
   els.historySearch.addEventListener('input', renderHistory);
-  els.dashboardForm.addEventListener('submit', (event) => { event.preventDefault(); const text = els.dashboardInput.value.trim(); if (!text) return; enterApp(); els.dashboardInput.value = ''; autoResize(els.dashboardInput); sendMessage(text); });
+  els.dashboardForm.addEventListener('submit', (event) => {
+    event.preventDefault(); const text = els.dashboardInput.value.trim(); if (!text) return;
+    activeId = ''; enterApp(); els.dashboardInput.value = ''; autoResize(els.dashboardInput); sendMessage(text);
+  });
   els.chatForm.addEventListener('submit', (event) => { event.preventDefault(); const text = els.chatInput.value.trim(); if (!text) return; els.chatInput.value = ''; autoResize(els.chatInput); sendMessage(text); });
   for (const input of [els.dashboardInput, els.chatInput]) {
     input.addEventListener('input', () => autoResize(input));
@@ -254,7 +308,5 @@
     if (suggestion.closest('#dashboard')) { els.dashboardInput.value = text; autoResize(els.dashboardInput); els.dashboardInput.focus(); }
     else { enterApp(); sendMessage(text); }
   });
-
-  // The landing page is the default entry point; direct chat links can be added later.
   renderHistory();
 })();
