@@ -1,107 +1,43 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f7fb">
-  <meta name="description" content="EduCator is your friendly, personal study partner for learning any subject.">
-  <title>EduCator — Your study partner</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb"><title>EduCator — Your study partner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Manrope:wght@700;800&display=swap">
+  <link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="enhancements.css">
   <script defer src="app.js"></script>
 </head>
 <body>
   <main id="welcome" class="welcome-screen">
-    <nav class="welcome-nav">
-      <a class="brand" href="#home" aria-label="EduCator home"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a>
-      <button id="enterFromNav" class="button button-dark button-small" type="button">Open my study space <span aria-hidden="true">↗</span></button>
-    </nav>
-    <section class="hero">
-      <div class="hero-copy">
-        <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR PERSONAL LEARNING SPACE</div>
-        <h1>Curiosity looks<br>good on <span>you.</span></h1>
-        <p class="hero-description">Big questions, tricky homework, new skills—bring them all. Learn at your pace with a friendly tutor that helps you understand the <em>why</em>, not just the answer.</p>
-        <button id="startLearning" class="button button-dark button-hero" type="button">Start learning <span aria-hidden="true">→</span></button>
-        <p class="fine-print">No question is too small. Start with whatever's on your mind.</p>
-      </div>
-      <div class="hero-art" aria-label="Illustration of books and learning notes" role="img">
-        <div class="art-sun"></div><div class="art-star star-one">✳</div><div class="art-star star-two">✦</div>
-        <div class="art-note note-one"><span>your next</span><strong>“aha!”</strong><small>moment</small></div>
-        <div class="book book-back"></div><div class="book book-mid"></div><div class="book book-front"><span>learn<br>anything</span><i></i></div>
-        <div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div>
-        <div class="art-sticker">made for<br><b>curious minds</b> <span>✿</span></div>
-      </div>
-    </section>
-    <section class="welcome-bottom" aria-label="What you can do">
-      <div class="bottom-intro"><span class="tiny-label">A LITTLE HELP GOES A LONG WAY</span><h2>Make room for<br>your next big idea.</h2></div>
-      <article class="feature-card"><span class="feature-icon icon-peach">✎</span><h3>Ask anything</h3><p>From algebra to ancient history, explore whatever you're curious about.</p></article>
-      <article class="feature-card"><span class="feature-icon icon-lilac">◎</span><h3>Learn your way</h3><p>Get a clear explanation, a worked example, or a hint—your call.</p></article>
-      <article class="feature-card"><span class="feature-icon icon-mint">↗</span><h3>Pick up anytime</h3><p>Your conversations stay in this browser, ready when you are.</p></article>
-    </section>
-    <footer class="welcome-footer"><span>EduCator <span class="footer-dot">✳</span> built for curious minds</span><span>One question can open a whole new world.</span></footer>
+    <nav class="welcome-nav"><a class="brand" href="#top"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a><button id="enterFromNav" class="button button-dark button-small" type="button">Open study space <span>↗</span></button></nav>
+    <section id="top" class="hero"><div class="hero-copy"><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR PERSONAL LEARNING SPACE</div><h1>Curiosity looks<br>good on <span>you.</span></h1><p class="hero-description">Big questions, tricky homework, new skills—bring them all. Learn at your pace with a friendly tutor that helps you understand the <em>why</em>, not just the answer.</p><button id="startLearning" class="button button-dark button-hero" type="button">Start learning <span>→</span></button><p class="fine-print">No question is too small. Start with whatever's on your mind.</p></div><div class="hero-art" aria-label="Learning illustration" role="img"><div class="art-sun"></div><div class="book book-back"></div><div class="book book-mid"></div><div class="book book-front"><span>learn<br>anything</span></div><div class="art-note"><span>your next</span><strong>aha!</strong><small>moment</small></div></div></section>
+    <section class="welcome-bottom"><div class="bottom-intro"><span class="tiny-label">A LITTLE HELP GOES A LONG WAY</span><h2>Make room for<br>your next big idea.</h2></div><article class="feature-card"><span class="feature-icon icon-peach">✎</span><h3>Ask anything</h3><p>Explore every subject that sparks your curiosity.</p></article><article class="feature-card"><span class="feature-icon icon-lilac">◎</span><h3>Learn your way</h3><p>Get explanations, examples, hints, or a complete walkthrough.</p></article><article class="feature-card"><span class="feature-icon icon-mint">↗</span><h3>Pick up anytime</h3><p>Organize conversations in your private browser notebook.</p></article></section>
+    <section class="scroll-story story-questions"><div class="story-copy"><span class="tiny-label">FOLLOW YOUR CURIOSITY</span><h2>Every subject has a story.</h2><p>Ask one more question. Follow an unexpected path. Understanding grows one clear step at a time.</p></div></section>
+    <section class="study-path"><div class="study-path-intro"><span class="tiny-label">HOW EDUCATOR HELPS</span><h2>A clearer way to learn.</h2></div><div class="path-grid"><article><span>01</span><h3>Start with a question</h3><p>Type it naturally—there is no special format.</p></article><article><span>02</span><h3>Choose your topic</h3><p>Save the conversation in Math, Science, Writing, History, or a custom notebook.</p></article><article><span>03</span><h3>Keep exploring</h3><p>Ask follow-ups and continue the conversation whenever you return.</p></article></div></section>
+    <section class="scroll-story story-ideas"><div class="story-copy"><span class="tiny-label">SMALL STEPS, BIG IDEAS</span><h2>Learn something new today.</h2><p>Bring the question. EduCator will work through the ideas with you.</p><button id="parallaxStart" class="button button-dark parallax-cta" type="button">Open study space →</button></div></section>
+    <footer class="welcome-footer"><span>EduCator ✳ built for curious minds</span><span>One question can open a whole new world.</span></footer>
   </main>
 
   <div id="app" class="app-shell" hidden>
     <aside id="sidebar" class="sidebar">
-      <div class="sidebar-top">
-        <a class="brand app-brand" href="#home" aria-label="EduCator home"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a>
-        <button id="closeSidebar" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
-      </div>
+      <div class="sidebar-top"><a class="brand app-brand" href="#top"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a><button id="closeSidebar" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button></div>
       <button id="newChat" class="new-chat-button" type="button"><span class="plus-icon">＋</span> New conversation</button>
-      <div class="history-heading"><span>YOUR RECENT CHATS</span><button id="clearHistory" class="text-button" type="button" title="Clear all saved conversations">Clear</button></div>
-      <label class="history-search"><span aria-hidden="true">⌕</span><input id="historySearch" type="search" placeholder="Find a conversation" autocomplete="off"></label>
-      <div id="historyList" class="history-list" aria-label="Conversation history"></div>
-      <div id="emptyHistory" class="history-empty" hidden>Your conversations will show up here.</div>
-      <div class="sidebar-bottom">
-        <div class="local-note"><span>⌂</span><p><strong>Saved on this device</strong><br>Your chat history stays in this browser.</p></div>
-        <button id="homeButton" class="home-button" type="button"><span>←</span> Back to welcome page</button>
-      </div>
+      <div class="notebook-heading"><span>NOTEBOOKS</span><button id="addTopic" class="text-button" type="button">+ Add</button></div>
+      <div id="topicList" class="topic-list"></div>
+      <div class="history-heading"><span>CONVERSATIONS</span><button id="clearHistory" class="text-button" type="button">Clear</button></div>
+      <label class="history-search"><span>⌕</span><input id="historySearch" type="search" placeholder="Find a conversation"></label>
+      <div id="historyList" class="history-list"></div><div id="emptyHistory" class="history-empty" hidden></div>
+      <div class="sidebar-bottom"><div class="local-note"><span>⌂</span><p><strong>Saved on this device</strong><br>Your notebooks stay in this browser.</p></div><button id="homeButton" class="home-button" type="button">← Back to welcome page</button></div>
     </aside>
     <div id="sidebarScrim" class="sidebar-scrim"></div>
-
     <section class="workspace">
-      <header class="topbar">
-        <button id="openSidebar" class="icon-button mobile-only" type="button" aria-label="Open navigation">☰</button>
-        <div class="breadcrumb"><span class="breadcrumb-brand">EduCator</span><span class="breadcrumb-slash">/</span><span id="topbarTitle">Your learning space</span></div>
-        <div class="topbar-right"><span class="online-indicator"></span><span>Ready when you are</span><span class="avatar">E</span></div>
-      </header>
-
-      <div id="dashboard" class="dashboard-view">
-        <div class="dashboard-inner">
-          <div class="welcome-back"><span id="todayLabel" class="tiny-label">YOUR STUDY SPACE</span><span class="sparkle">✳</span></div>
-          <h1>What are we<br><span>figuring out</span> today?</h1>
-          <p class="dashboard-subtitle">Pick a starting point or ask your own question. We'll take it one step at a time.</p>
-          <div class="topic-grid" aria-label="Suggested topics">
-            <button class="topic-card topic-math" data-prompt="Can you help me understand a math concept? Start by asking what I'm working on." type="button"><span class="topic-emoji">∑</span><span class="topic-title">Math & numbers</span><span class="topic-caption">Make the tricky bits click</span><span class="topic-arrow">↗</span></button>
-            <button class="topic-card topic-science" data-prompt="I'd like to explore a science question. Help me understand the idea with a clear explanation and an example." type="button"><span class="topic-emoji">✳</span><span class="topic-title">Science & nature</span><span class="topic-caption">Get curious about how it works</span><span class="topic-arrow">↗</span></button>
-            <button class="topic-card topic-writing" data-prompt="Can you help me with writing or language? Ask what I'm working on and guide me through it." type="button"><span class="topic-emoji">Aa</span><span class="topic-title">Writing & language</span><span class="topic-caption">Find the words and structure</span><span class="topic-arrow">↗</span></button>
-            <button class="topic-card topic-history" data-prompt="I want to learn about history or society. Help me understand the context and why it matters." type="button"><span class="topic-emoji">◷</span><span class="topic-title">History & society</span><span class="topic-caption">Connect the past to today</span><span class="topic-arrow">↗</span></button>
-          </div>
-          <div class="dashboard-compose-wrap">
-            <form id="dashboardForm" class="compose-box">
-              <label class="sr-only" for="dashboardInput">Ask a question about any topic</label>
-              <textarea id="dashboardInput" rows="1" maxlength="8000" placeholder="Ask anything you're curious about…"></textarea>
-              <div class="compose-tools"><span>Any subject, any starting point</span><button class="send-button" type="submit" aria-label="Send question">↑</button></div>
-            </form>
-            <div class="prompt-suggestions"><span>TRY</span><button type="button" data-prompt="Explain a difficult idea to me in simple terms.">Explain it simply</button><button type="button" data-prompt="Quiz me on a topic and give me one question at a time.">Quiz me</button><button type="button" data-prompt="Help me get started on a project by breaking it into manageable steps.">Plan a project</button></div>
-          </div>
-          <div class="dashboard-footnote"><span>✦</span> Learning is a journey. Ask follow-up questions whenever you need.</div>
-        </div>
-      </div>
-
-      <div id="chatView" class="chat-view" hidden>
-        <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
-        <div class="chat-compose-area">
-          <form id="chatForm" class="compose-box chat-compose">
-            <label class="sr-only" for="chatInput">Write a message</label>
-            <textarea id="chatInput" rows="1" maxlength="8000" placeholder="Ask a follow-up or try another question…"></textarea>
-            <div class="compose-tools"><span>EduCator can make mistakes. Check important information.</span><button class="send-button" type="submit" aria-label="Send message">↑</button></div>
-          </form>
-        </div>
-      </div>
-      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <header class="topbar"><button id="openSidebar" class="icon-button mobile-only" type="button" aria-label="Open navigation">☰</button><div class="breadcrumb"><span class="breadcrumb-brand">EduCator</span><span>/</span><span id="topbarTitle">Your learning space</span></div><div class="topbar-right"><span class="online-indicator"></span><span>Ready when you are</span><span class="avatar">E</span></div></header>
+      <div id="dashboard" class="dashboard-view"><div class="dashboard-inner"><div class="welcome-back"><span class="tiny-label">YOUR STUDY SPACE</span><span>✳</span></div><h1>What are we<br><span>figuring out</span> today?</h1><p class="dashboard-subtitle">Choose a notebook or ask your own question.</p>
+        <div class="topic-grid"><button class="topic-card topic-math" data-topic="Math & Numbers" data-prompt="Can you help me understand a math concept? Start by asking what I'm working on." type="button"><span class="topic-emoji">∑</span><span class="topic-title">Math & numbers</span><span class="topic-caption">Make tricky ideas click</span></button><button class="topic-card topic-science" data-topic="Science & Nature" data-prompt="I'd like to explore a science question. Explain the idea clearly and use an example." type="button"><span class="topic-emoji">✳</span><span class="topic-title">Science & nature</span><span class="topic-caption">Find out how it works</span></button><button class="topic-card topic-writing" data-topic="Writing & Language" data-prompt="Can you help me with writing or language? Ask what I'm working on first." type="button"><span class="topic-emoji">Aa</span><span class="topic-title">Writing & language</span><span class="topic-caption">Find the right words</span></button><button class="topic-card topic-history" data-topic="History & Society" data-prompt="I want to learn about history or society. Help me understand the context and why it matters." type="button"><span class="topic-emoji">◷</span><span class="topic-title">History & society</span><span class="topic-caption">Connect past and present</span></button></div>
+        <div class="dashboard-compose-wrap"><form id="dashboardForm" class="compose-box"><label class="sr-only" for="dashboardInput">Ask a question</label><textarea id="dashboardInput" rows="1" maxlength="8000" placeholder="Ask anything you're curious about…"></textarea><div class="compose-tools"><select id="dashboardTopic" aria-label="Notebook"><option>Math & Numbers</option><option>Science & Nature</option><option>Writing & Language</option><option>History & Society</option><option>General</option></select><button class="send-button" type="submit" aria-label="Send question">↑</button></div></form></div>
+      </div></div>
+      <div id="chatView" class="chat-view" hidden><div id="messages" class="messages" role="log" aria-live="polite"></div><div class="chat-compose-area"><form id="chatForm" class="compose-box chat-compose"><label class="sr-only" for="chatInput">Write a message</label><textarea id="chatInput" rows="1" maxlength="8000" placeholder="Ask a follow-up…"></textarea><div class="compose-tools"><select id="chatTopic" aria-label="Notebook"></select><button class="send-button" type="submit" aria-label="Send message">↑</button></div></form></div></div>
+      <div id="toast" class="toast" role="status"></div>
     </section>
   </div>
 </body>
