@@ -1,7 +1,7 @@
 // EduCator browser app
 (() => {
   'use strict';
-  const API_URL = window.EDUCATOR_API_URL || '/api/solve';
+  const API_URL = window.EDUCATOR_API_URL || 'https://bio-content-ai.vercel.app/api/solve';
   const KEYS = { chats:'educator.conversations.v2', active:'educator.activeConversation.v2', topics:'educator.topics.v2', font:'educator.fontTheme.v1' };
   const FONTS = { sans:"'DM Sans',system-ui,sans-serif", rounded:"'Nunito',system-ui,sans-serif", serif:"'Lora',Georgia,serif", readable:"'Atkinson Hyperlegible',Arial,sans-serif" };
   const MAX_FILES=4, MAX_FILE_SIZE=1024*1024, MAX_TOTAL_SIZE=2*1024*1024;
