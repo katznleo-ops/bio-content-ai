@@ -9,6 +9,7 @@ const COMMIT = (process.env.VERCEL_GIT_COMMIT_SHA || 'unknown').slice(0, 12);
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const SYSTEM_PROMPT='You are EduCator, a warm, thoughtful tutor who helps learners understand subjects across math, science, writing, languages, history, technology, and everyday topics. Be patient, encouraging, accurate, and age-appropriate. Explain concepts clearly, ask helpful follow-up questions when needed, and carefully analyze any image or document the learner attaches. For text or source questions, guide learning rather than simply doing graded work. Format answers in Markdown: short paragraphs, ## headings for longer answers, bullet or numbered lists for steps, **bold** for key terms, and tables when comparing things. Write math in LaTeX with $...$ inline and $$...$$ for displayed equations. Keep answers focused; avoid unnecessary length.';
 const ALLOWED_MIME = new Set(['image/jpeg','image/png','image/webp','image/gif','application/pdf','text/plain','text/markdown','text/csv']);
 function send(res,status,body){res.setHeader('X-EduCator-Commit',COMMIT);return res.status(status).json(body)}
 function parseAttachment(file,budget){
@@ -46,12 +47,30 @@ export default async function handler(req,res){
   let body=req.body;if(typeof body==='string'){try{body=JSON.parse(body)}catch{body=null}}
   const contents=readMessages(body);if(!contents)return send(res,400,{error:'Send up to 30 valid messages with supported attachments (max 2 MB total).'});
   const apiKey=(process.env.GEMINI_API_KEY||'').trim();if(!apiKey)return send(res,500,{error:'The learning service is not configured yet.'});
-  const model=(process.env.GEMINI_MODEL||'gemini-2.5-flash').trim().replace(/^models\//,'');const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const model=(process.env.GEMINI_MODEL||'gemini-2.5-flash').trim().replace(/^models\//,'');
+  const stream=body?.stream===true;
+  const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${stream?'streamGenerateContent?alt=sse':'generateContent'}`;
+  const payload=JSON.stringify({systemInstruction:{parts:[{text:SYSTEM_PROMPT}]},contents,generationConfig:{temperature:0.45,maxOutputTokens:4096}});
+  const textOf=(chunk)=>(chunk?.candidates?.[0]?.content?.parts||[]).filter(part=>!part.thought).map(part=>part.text||'').join('');
   try{
-    const request=()=>fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},body:JSON.stringify({systemInstruction:{parts:[{text:'You are EduCator, a warm, thoughtful tutor who helps learners understand subjects across math, science, writing, languages, history, technology, and everyday topics. Be patient, encouraging, accurate, and age-appropriate. Explain concepts clearly, ask helpful follow-up questions when needed, and carefully analyze any image or document the learner attaches. For text or source questions, guide learning rather than simply doing graded work.'}]},contents,generationConfig:{temperature:0.45,maxOutputTokens:4096}})});let upstream=await request();
+    const request=()=>fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},body:payload});
+    let upstream=await request();
     // Gemini returns 503/429 when a model is briefly overloaded; retry a couple of times with backoff.
     for(let attempt=1;attempt<=2&&(upstream.status===503||upstream.status===429);attempt++){await new Promise(r=>setTimeout(r,attempt*1500));upstream=await request()}
-    const data=await upstream.json().catch(()=>null);if(!upstream.ok){console.error('[educator] provider error',upstream.status,data?.error?.status||'UNKNOWN');return send(res,502,{error:'A response could not be generated right now.',/* TEMP DEBUG: remove once the Gemini 502 is fixed */debug:{upstreamStatus:upstream.status,errorStatus:data?.error?.status||null,errorMessage:data?.error?.message||null,model}})}
-    const answer=(data?.candidates?.[0]?.content?.parts||[]).filter(part=>!part.thought).map(part=>part.text||'').join('').trim();if(!answer)return send(res,502,{error:'No answer came back. Please try again.'});return send(res,200,{answer,model});
-  }catch(error){console.error('[educator] upstream request failed',String(error));return send(res,502,{error:'Could not reach the learning service. Please try again.'})}
+    if(!upstream.ok){const data=await upstream.json().catch(()=>null);console.error('[educator] provider error',upstream.status,data?.error?.status||'UNKNOWN',data?.error?.message||'');return send(res,502,{error:upstream.status===503||upstream.status===429?'The tutor is very busy right now. Please try again in a moment.':'A response could not be generated right now.'})}
+    if(!stream){
+      const data=await upstream.json().catch(()=>null);const answer=textOf(data).trim();
+      if(!answer)return send(res,502,{error:'No answer came back. Please try again.'});return send(res,200,{answer,model});
+    }
+    // Streaming: relay Gemini's SSE as newline-delimited JSON ({"t":"text"} lines, then {"done":true}).
+    res.setHeader('X-EduCator-Commit',COMMIT);res.setHeader('Content-Type','application/x-ndjson; charset=utf-8');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('X-Accel-Buffering','no');res.statusCode=200;
+    const reader=upstream.body.getReader();const decoder=new TextDecoder();let buffer='',sent=0;
+    const handle=(line)=>{if(!line.startsWith('data:'))return;let chunk;try{chunk=JSON.parse(line.slice(5))}catch{return}const t=textOf(chunk);if(t){sent+=t.length;res.write(JSON.stringify({t})+'\n')}};
+    try{
+      for(;;){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let nl;while((nl=buffer.indexOf('\n'))>=0){handle(buffer.slice(0,nl).trim());buffer=buffer.slice(nl+1)}}
+      handle(buffer.trim());
+      res.write(JSON.stringify(sent?{done:true,model}:{error:'No answer came back. Please try again.'})+'\n');
+    }catch(error){console.error('[educator] stream interrupted',String(error));res.write(JSON.stringify({error:'The answer was interrupted. Please try again.'})+'\n')}
+    return res.end();
+  }catch(error){console.error('[educator] upstream request failed',String(error));if(res.headersSent)return res.end();return send(res,502,{error:'Could not reach the learning service. Please try again.'})}
 }
