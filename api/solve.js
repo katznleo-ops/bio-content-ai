@@ -2,6 +2,7 @@
 const ALLOWED_ORIGINS = new Set([
   'https://katznleo-ops.github.io',
   'https://bio-content-ai.vercel.app',
+  'https://bio-content-ai-revised.vercel.app',
   ...(process.env.EXTRA_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean)
 ]);
 const COMMIT = (process.env.VERCEL_GIT_COMMIT_SHA || 'unknown').slice(0, 12);
