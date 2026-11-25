@@ -2,43 +2,156 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f7fb"><title>EduCator — Your study partner</title>
+  <meta name="theme-color" content="#f7f6fc">
+  <title>EduCator — Your personal tutor for any subject</title>
+  <meta name="description" content="EduCator is a friendly AI tutor. Ask anything, snap a photo of your homework, and build notebooks with personalised learning plans, lessons, and quizzes.">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=Lora:wght@400;500;600;700&family=Manrope:wght@700;800&family=Nunito:wght@400;600;700;800&display=swap">
-  <link rel="stylesheet" href="./styles.css?v=7"><link rel="stylesheet" href="./enhancements.css?v=7"><link rel="stylesheet" href="./vendor/katex/katex.min.css"><script defer src="./vendor/katex/katex.min.js"></script><script defer src="./markdown.js?v=7"></script><script defer src="./app.js?v=7"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+  <link rel="stylesheet" href="./landing.css?v=8">
 </head>
 <body>
-  <main id="welcome" class="welcome-screen">
-    <nav class="welcome-nav"><a class="brand" href="#top" aria-label="EduCator home"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a><button id="enterFromNav" class="button button-dark button-small" type="button">Open study space <span>↗</span></button></nav>
-    <section id="top" class="hero"><div class="hero-copy"><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR PERSONAL LEARNING SPACE</div><h1>Curiosity looks<br>good on <span>you.</span></h1><p class="hero-description">Big questions, tricky homework, new skills—bring them all. Learn at your pace with a friendly tutor that helps you understand the <em>why</em>, not just the answer.</p><button id="startLearning" class="button button-dark button-hero" type="button">Start learning <span>→</span></button><p class="fine-print">No question is too small. Start with whatever's on your mind.</p></div><div class="hero-art" aria-label="Learning illustration" role="img"><div class="art-sun"></div><div class="book book-back"></div><div class="book book-mid"></div><div class="book book-front"><span>learn<br>anything</span></div><div class="art-note"><span>your next</span><strong>aha!</strong><small>moment</small></div></div></section>
-    <section class="welcome-bottom"><div class="bottom-intro"><span class="tiny-label">A LITTLE HELP GOES A LONG WAY</span><h2>Make room for<br>your next big idea.</h2></div><article class="feature-card"><span class="feature-icon icon-peach">✎</span><h3>Ask anything</h3><p>Explore every subject that sparks your curiosity.</p></article><article class="feature-card"><span class="feature-icon icon-lilac">◎</span><h3>Learn your way</h3><p>Get explanations, examples, hints, or a complete walkthrough.</p></article><article class="feature-card"><span class="feature-icon icon-mint">↗</span><h3>Pick up anytime</h3><p>Organize conversations in your private browser notebook.</p></article></section>
-    <section class="scroll-story story-questions"><div class="story-copy"><span class="tiny-label">FOLLOW YOUR CURIOSITY</span><h2>Every subject has a story.</h2><p>Ask one more question. Follow an unexpected path. Understanding grows one clear step at a time.</p></div></section>
-    <section class="study-path"><div class="study-path-intro"><span class="tiny-label">HOW EDUCATOR HELPS</span><h2>A clearer way to learn.</h2></div><div class="path-grid"><article><span>01</span><h3>Start with a question</h3><p>Type it naturally—there is no special format.</p></article><article><span>02</span><h3>Choose your topic</h3><p>Save conversations in notebooks you create and name.</p></article><article><span>03</span><h3>Keep exploring</h3><p>Ask follow-ups and continue the conversation whenever you return.</p></article></div></section>
-    <section class="scroll-story story-ideas"><div class="story-copy"><span class="tiny-label">SMALL STEPS, BIG IDEAS</span><h2>Learn something new today.</h2><p>Bring the question. EduCator will work through the ideas with you.</p><button id="parallaxStart" class="button button-dark parallax-cta" type="button">Open study space →</button></div></section>
-    <footer class="welcome-footer"><span>EduCator ✳ built for curious minds</span><span>One question can open a whole new world.</span></footer>
-  </main>
-  <div id="app" class="app-shell" hidden>
-    <aside id="sidebar" class="sidebar"><div class="sidebar-top"><a class="brand app-brand" href="#top" aria-label="EduCator home"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a><button id="closeSidebar" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button></div>
-      <button id="newChat" class="new-chat-button" type="button"><span class="plus-icon">＋</span> New conversation</button><div class="notebook-heading"><span>NOTEBOOKS</span><button id="addTopic" class="text-button" type="button">+ Add notebook</button></div><div id="topicList" class="topic-list"></div>
-      <div class="history-heading"><span>CONVERSATIONS</span><button id="clearHistory" class="text-button" type="button">Clear</button></div><label class="history-search"><span>⌕</span><input id="historySearch" type="search" placeholder="Find a conversation" autocomplete="off"></label><div id="historyList" class="history-list"></div><div id="emptyHistory" class="history-empty" hidden></div>
-      <div class="sidebar-bottom"><div class="local-note"><span>⌂</span><p><strong>Saved on this device</strong><br>Your chats and notebooks stay in this browser.</p></div><button id="homeButton" class="home-button" type="button">← Back to welcome page</button></div>
-    </aside><div id="sidebarScrim" class="sidebar-scrim"></div>
-    <section class="workspace"><header class="topbar"><button id="openSidebar" class="icon-button mobile-only" type="button" aria-label="Open navigation">☰</button><div class="breadcrumb"><span class="breadcrumb-brand">EduCator</span><span>/</span><span id="topbarTitle">Your learning space</span></div><div class="topbar-right"><label class="font-picker"><span>Aa</span><select id="fontTheme" aria-label="Chat font theme"><option value="rounded">Rounded</option><option value="sans">Modern</option><option value="serif">Bookish</option><option value="readable">Clear</option></select></label><span class="online-indicator"></span><span>Ready when you are</span><span class="avatar">E</span></div></header>
-      <div id="dashboard" class="dashboard-view"><div class="dashboard-inner"><div class="welcome-back"><span class="tiny-label">YOUR STUDY SPACE</span><span>✳</span></div><h1>What are we<br><span>figuring out</span> today?</h1><p class="dashboard-subtitle">Choose a notebook or ask your own question.</p>
-        <div class="topic-grid"><button class="topic-card topic-math" data-topic="Math & Numbers" data-prompt="Can you help me understand a math concept? Start by asking what I'm working on." type="button"><span class="topic-emoji">∑</span><span class="topic-title">Math & numbers</span><span class="topic-caption">Make tricky ideas click</span></button><button class="topic-card topic-science" data-topic="Science & Nature" data-prompt="I'd like to explore a science question. Explain the idea clearly and use an example." type="button"><span class="topic-emoji">✳</span><span class="topic-title">Science & nature</span><span class="topic-caption">Find out how it works</span></button><button class="topic-card topic-writing" data-topic="Writing & Language" data-prompt="Can you help me with writing or language? Ask what I'm working on first." type="button"><span class="topic-emoji">Aa</span><span class="topic-title">Writing & language</span><span class="topic-caption">Find the right words</span></button><button class="topic-card topic-history" data-topic="History & Society" data-prompt="I want to learn about history or society. Help me understand the context and why it matters." type="button"><span class="topic-emoji">◷</span><span class="topic-title">History & society</span><span class="topic-caption">Connect past and present</span></button></div>
-        <div class="dashboard-compose-wrap"><form id="dashboardForm" class="compose-box"><label class="sr-only" for="dashboardInput">Ask a question</label><textarea id="dashboardInput" rows="1" maxlength="8000" placeholder="Ask anything you're curious about…"></textarea><div class="attachment-list" id="dashboardAttachmentList"></div><div class="compose-tools"><button id="dashboardAttachFile" class="composer-icon-button" type="button" aria-label="Attach image or file" title="Attach image or file">＋</button><label class="sr-only" for="dashboardTopic">Notebook</label><select id="dashboardTopic" aria-label="Choose a notebook"><option value="">No notebook</option></select><button class="send-button" type="submit" aria-label="Send question" title="Send">↑</button></div></form></div>
-      </div></div>
-      <section id="notebookView" class="notebook-view" hidden>
-        <div class="notebook-home"><div class="notebook-home-heading"><span class="tiny-label">NOTEBOOK STUDY SPACE</span><button id="backToDashboard" class="notebook-back" type="button" aria-label="Back to dashboard" title="Back">←</button></div><h1 id="notebookTitle">Notebook</h1><p id="notebookSubtitle">Everything for this subject, together in one place.</p>
-          <div class="notebook-actions-grid"><button class="notebook-action-card" data-notebook-action="quiz" type="button"><span>✦</span><strong>Quiz me</strong><small>Test what I know</small></button><button class="notebook-action-card" data-notebook-action="diagnostic" type="button"><span>◎</span><strong>Take a diagnostic</strong><small>Find my starting level</small></button><button class="notebook-action-card" data-notebook-action="plan" type="button"><span>↗</span><strong>Describe a learning plan</strong><small>Build a clear path</small></button></div>
-          <div class="notebook-chat-prompt"><div class="notebook-chat-heading"><span>Ask this notebook</span><span id="notebookConversationCount">0 conversations</span></div><form id="notebookForm" class="compose-box notebook-compose"><label class="sr-only" for="notebookInput">Ask this notebook</label><textarea id="notebookInput" rows="1" maxlength="8000" placeholder="Ask a question for this notebook…"></textarea><div class="attachment-list" id="notebookAttachmentList"></div><div class="compose-tools"><button id="notebookAttachFile" class="composer-icon-button" type="button" aria-label="Attach image or file" title="Attach image or file">＋</button><button class="send-button" type="submit" aria-label="Send" title="Send">↑</button></div></form></div>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="EduCator home"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a>
+      <nav class="nav-links" aria-label="Sections"><a href="#features">Features</a><a href="#notebooks">Notebooks</a><a href="#quizzes">Quizzes</a><a href="#faq">FAQ</a></nav>
+      <a class="btn btn-dark" href="educator/app/">Open EduCator <span aria-hidden="true">→</span></a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow"><i></i> Your personal learning space</span>
+        <h1>Curiosity looks good on <span class="hl">you.</span></h1>
+        <p class="hero-lead">EduCator is a friendly tutor for any subject. Ask a question, snap a photo of your homework, or build a notebook that turns a whole subject into a plan you can actually finish.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary btn-xl" href="educator/app/">Start learning <span aria-hidden="true">→</span></a>
+          <a class="btn btn-outline btn-xl" href="#notebooks">See how notebooks work</a>
         </div>
-      </section>
-      <div id="chatView" class="chat-view" hidden><div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions"></div><div class="chat-compose-area"><form id="chatForm" class="compose-box chat-compose"><label class="sr-only" for="chatInput">Write a message</label><textarea id="chatInput" rows="1" maxlength="8000" placeholder="Ask a follow-up…"></textarea><div class="attachment-list" id="chatAttachmentList"></div><div class="compose-tools"><button id="attachFile" class="composer-icon-button" type="button" aria-label="Attach image or file" title="Attach image or file">＋</button><label class="sr-only" for="chatTopic">Notebook</label><select id="chatTopic" aria-label="Choose or move to notebook"><option value="">No notebook</option></select><button class="send-button" type="submit" aria-label="Send" title="Send">↑</button></div></form></div></div>
-      <input id="fileInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" multiple>
-      <dialog id="siteDialog" class="site-dialog" aria-labelledby="dialogTitle"><div class="dialog-card"><h2 id="dialogTitle">Edit</h2><label id="dialogLabel" for="dialogInput">Name</label><input id="dialogInput" maxlength="70" autocomplete="off"><div class="dialog-actions"><button id="dialogCancel" class="dialog-cancel" type="button">Cancel</button><button id="dialogSave" class="dialog-save" type="button">Save</button></div></div></dialog>
-      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <ul class="hero-points"><li>No account needed</li><li>Works on phone &amp; laptop</li><li>Saved privately in your browser</li></ul>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="mock-window">
+          <div class="mock-bar"><i></i><i></i><i></i><span>EduCator · Chemistry</span></div>
+          <div class="mock-chat">
+            <div class="mock-msg user">Why does ice float on water?</div>
+            <div class="mock-msg tutor">
+              <strong class="mock-h">Great question! It's all about density.</strong>
+              <p>When water freezes, its molecules lock into a <b>hexagonal lattice</b> held by hydrogen bonds, which leaves more empty space than liquid water.</p>
+              <div class="mock-math">ρ = m / V &nbsp;→&nbsp; ρ<sub>ice</sub> ≈ 0.92 g/cm³ &lt; ρ<sub>water</sub> ≈ 1.00 g/cm³</div>
+              <p>Less dense things float, so ice sits on top. 🧊</p>
+              <span class="mock-follow">Want a quick quiz on this?</span>
+            </div>
+          </div>
+        </div>
+        <div class="float-card fc-1"><span>🎯</span><div><strong>Lesson 4 of 8</strong><small>Chemical bonding</small></div></div>
+        <div class="float-card fc-2"><span>✦</span><div><strong>Quiz score</strong><small>9 / 10 correct</small></div></div>
+      </div>
     </section>
-  </div>
+
+    <!-- Subject strip -->
+    <section class="subjects" aria-label="Subjects">
+      <p>One tutor, every subject</p>
+      <div class="subject-track"><span>∑ Math</span><span>🧬 Biology</span><span>⚗️ Chemistry</span><span>🪐 Physics</span><span>📚 Writing</span><span>🏛️ History</span><span>🗣️ Languages</span><span>💻 Coding</span><span>📈 Economics</span><span>🎨 Art</span><span>🎵 Music</span><span>🧠 Psychology</span></div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="section">
+      <div class="section-intro"><span class="eyebrow">Everything you need to learn</span><h2>A tutor that explains the <span class="hl">why</span>, not just the answer.</h2><p>EduCator is built to help you actually understand. Here's what you can do from day one.</p></div>
+      <div class="feature-grid">
+        <article class="feature"><span class="f-icon peach">💬</span><h3>Ask anything, any time</h3><p>Type your question the way you'd ask a friend. Follow up as many times as you need until it clicks.</p></article>
+        <article class="feature"><span class="f-icon lilac">📸</span><h3>Snap your homework</h3><p>Attach photos, PDFs, or notes. EduCator reads them and walks you through the problem step by step.</p></article>
+        <article class="feature"><span class="f-icon mint">∑</span><h3>Beautiful math &amp; formatting</h3><p>Equations, tables, lists, and highlighted key terms appear cleanly formatted, so answers are easy to follow.</p></article>
+        <article class="feature"><span class="f-icon sky">📓</span><h3>Notebooks for real goals</h3><p>Create a private study space for a subject, with its own learning plan, lessons, sessions, and quizzes.</p></article>
+        <article class="feature"><span class="f-icon rose">✦</span><h3>Quizzes that teach</h3><p>Generate quizzes on any lesson. Every answer comes with an explanation, and your tutor helps with what you missed.</p></article>
+        <article class="feature"><span class="f-icon sand">Aa</span><h3>Learn your way</h3><p>Choose a reading font that's comfortable for you, including an extra-clear option designed for readability.</p></article>
+      </div>
+    </section>
+
+    <!-- Homework spotlight -->
+    <section class="spotlight">
+      <div class="spot-copy">
+        <span class="eyebrow">Stuck on a problem?</span>
+        <h2>Show it. Don't type it.</h2>
+        <p>Take a picture of a worksheet, upload lecture slides as a PDF, or paste in your essay draft. EduCator looks at exactly what you're working on and helps you get unstuck, without just handing you the answer.</p>
+        <ul class="checks"><li>Photos, PDFs, and text files up to 2 MB</li><li>Paste screenshots straight into the chat</li><li>Hints first, full walkthroughs when you want them</li></ul>
+        <a class="btn btn-primary btn-lg" href="educator/app/">Try it with your homework →</a>
+      </div>
+      <div class="spot-visual" aria-hidden="true">
+        <div class="paper"><div class="paper-line w80"></div><div class="paper-line w60"></div><div class="paper-eq">2x + 5 = 17</div><div class="paper-line w70"></div><div class="paper-eq">x² − 9 = 0</div><div class="paper-line w50"></div></div>
+        <div class="bubble-hint"><strong>Hint 1</strong><p>Start by getting <b>2x</b> on its own. What do you need to subtract from both sides?</p></div>
+      </div>
+    </section>
+
+    <!-- Notebooks -->
+    <section id="notebooks" class="section notebooks">
+      <div class="section-intro"><span class="eyebrow">Notebooks</span><h2>Turn any subject into a <span class="hl">course made for you.</span></h2><p>Notebooks are private study spaces for long-term learning. Their chats stay inside them, and your tutor remembers your goal, plan, and progress every time you return.</p></div>
+      <div class="steps">
+        <article class="step"><span class="step-num">1</span><h3>Set your goal</h3><p>Tell EduCator what you want to achieve, where you're starting from, and how much time you have.</p><div class="step-visual goal"><span class="pill on">Know the basics</span><span class="pill">30 min most days</span><span class="pill">🎯 Exam in March</span></div></article>
+        <article class="step"><span class="step-num">2</span><h3>Get a learning plan</h3><p>A step-by-step plan of lessons appears, ordered from foundations to mastery and sized to your schedule.</p><div class="step-visual plan"><div class="pl done">✓ What is a derivative?</div><div class="pl done">✓ Power &amp; chain rules</div><div class="pl now">3 · Product &amp; quotient rules</div><div class="pl">4 · Applications of derivatives</div></div></article>
+        <article class="step"><span class="step-num">3</span><h3>Learn lesson by lesson</h3><p>Start a lesson and your tutor teaches it interactively, checks your understanding, and wraps up with a recap.</p><div class="step-visual lesson"><span>Lesson 3 of 8</span><strong>Product &amp; quotient rules</strong><em>Mark complete ✓</em></div></article>
+        <article class="step"><span class="step-num">4</span><h3>Quiz &amp; track progress</h3><p>Take quizzes, watch your scores and completed lessons add up, and review mistakes with your tutor.</p><div class="step-visual stats"><div><strong>6/8</strong><small>lessons</small></div><div><strong>87%</strong><small>quiz avg</small></div></div></article>
+      </div>
+      <div class="universe">
+        <div class="universe-copy"><h3>Each notebook is its own little universe 🪐</h3><p>Your Biology notebook never mixes with your Spanish practice. Each one has its own color, sessions, plan, and quiz history, and your tutor uses all of it to decide what to focus on next.</p></div>
+        <div class="universe-cards" aria-hidden="true"><span style="--c:#2c9a6a">🧬 Biology<small>62%</small></span><span style="--c:#3576dd">🗣️ Spanish<small>40%</small></span><span style="--c:#6a5ae0">📐 Calculus<small>75%</small></span><span style="--c:#e0683a">📚 Essay writing<small>20%</small></span></div>
+      </div>
+    </section>
+
+    <!-- Quizzes -->
+    <section id="quizzes" class="spotlight reverse">
+      <div class="spot-copy">
+        <span class="eyebrow">Quizzes</span>
+        <h2>Find out what you know, and fix what you don't.</h2>
+        <p>Generate a quiz for a single lesson, everything you've studied so far, or a diagnostic that finds your real starting level. Choose easier, just right, or challenge mode.</p>
+        <ul class="checks"><li>Instant feedback with an explanation for every question</li><li>Scores saved so you can see yourself improve</li><li>One click to go over mistakes with your tutor</li></ul>
+        <a class="btn btn-primary btn-lg" href="educator/app/#/notebooks/new">Create a notebook →</a>
+      </div>
+      <div class="spot-visual" aria-hidden="true">
+        <div class="quiz-mock">
+          <span class="qm-top">Question 3 of 8</span>
+          <p class="qm-q">Which organelle produces most of a cell's ATP?</p>
+          <div class="qm-c"><b>A</b> Ribosome</div>
+          <div class="qm-c right"><b>B</b> Mitochondrion</div>
+          <div class="qm-c"><b>C</b> Golgi apparatus</div>
+          <div class="qm-c"><b>D</b> Nucleus</div>
+          <div class="qm-fb"><strong>✓ Correct!</strong> Mitochondria run cellular respiration, which makes most of the cell's ATP.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="section how">
+      <div class="section-intro"><span class="eyebrow">How it works</span><h2>Start in seconds.</h2></div>
+      <div class="how-grid">
+        <article><span>01</span><h3>Open EduCator</h3><p>No sign-up. Your study space opens right in your browser.</p></article>
+        <article><span>02</span><h3>Ask or plan</h3><p>Ask a quick question, or create a notebook for a subject you want to master.</p></article>
+        <article><span>03</span><h3>Keep going</h3><p>Come back any time. Your chats, notebooks, and progress are right where you left them.</p></article>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="section faq">
+      <div class="section-intro"><span class="eyebrow">Questions</span><h2>Good to know.</h2></div>
+      <div class="faq-list">
+        <details><summary>Do I need an account?</summary><p>No. EduCator works without signing up. Your chats and notebooks are saved in your browser on this device.</p></details>
+        <details><summary>Where is my data stored?</summary><p>Your conversations, notebooks, plans, and quiz results are stored locally in your browser. Messages you send are passed to the AI model to generate an answer. Clearing your browser data, or switching to another device or browser, means you won't see your saved history.</p></details>
+        <details><summary>What can I upload?</summary><p>Images (JPG, PNG, WebP, GIF), PDFs, and plain-text, Markdown, or CSV files. Each file can be up to 1 MB, with up to 4 files and 2 MB per message.</p></details>
+        <details><summary>Will it just do my homework for me?</summary><p>EduCator is designed to help you learn. It explains ideas, gives hints, and checks your thinking, so you understand the material and not just the answer.</p></details>
+        <details><summary>What's the difference between a chat and a notebook?</summary><p>Chats are great for quick questions. Notebooks are for subjects you want to study over time: they include a personalised learning plan, guided lessons, quizzes, and progress tracking, and their sessions stay private to that notebook.</p></details>
+        <details><summary>Is the AI always right?</summary><p>EduCator is usually accurate but can make mistakes. Double-check important facts, especially for exams, and ask follow-up questions whenever something doesn't seem right.</p></details>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta">
+      <h2>Your next “aha!” moment is one question away.</h2>
+      <p>Bring the question. EduCator will work through it with you.</p>
+      <div class="hero-ctas center"><a class="btn btn-light btn-xl" href="educator/app/">Open EduCator →</a><a class="btn btn-ghost-light btn-xl" href="educator/app/#/notebooks/new">Start a notebook</a></div>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="footer-inner"><a class="brand" href="#top"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a><span>Built for curious minds ✳ One question can open a whole new world.</span></div></footer>
 </body>
 </html>

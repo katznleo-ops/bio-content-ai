@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f7fb">
+  <title>Study space · EduCator</title>
+  <meta name="description" content="Your EduCator study space: chat with your tutor, and build notebooks with learning plans, lessons, and quizzes.">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=Lora:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap">
+  <link rel="stylesheet" href="../../vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="../../app.css?v=8">
+  <script defer src="../../vendor/katex/katex.min.js"></script>
+  <script defer src="../../markdown.js?v=8"></script>
+  <script defer src="../../app.js?v=8"></script>
+</head>
+<body data-mode="general">
+  <div class="app-shell">
+    <aside id="sidebar" class="sidebar" aria-label="Navigation">
+      <div class="sidebar-top">
+        <a class="brand" href="../../" title="EduCator home page"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a>
+        <button id="closeSidebar" class="icon-button mobile-only" type="button" aria-label="Close navigation">×</button>
+      </div>
+      <div id="sidebarBody" class="sidebar-body"></div>
+      <div class="sidebar-bottom">
+        <div class="local-note"><span aria-hidden="true">🔒</span><p><strong>Saved on this device</strong>Your chats and notebooks stay in this browser.</p></div>
+        <a class="home-link" href="../../">← EduCator home page</a>
+      </div>
+    </aside>
+    <div id="sidebarScrim" class="sidebar-scrim"></div>
+    <section class="workspace">
+      <header class="topbar">
+        <button id="openSidebar" class="icon-button mobile-only" type="button" aria-label="Open navigation">☰</button>
+        <nav id="crumbs" class="crumbs" aria-label="Breadcrumb"></nav>
+        <label class="font-picker" title="Chat font"><span aria-hidden="true">Aa</span><select id="fontTheme" aria-label="Chat font"><option value="rounded">Rounded</option><option value="sans">Modern</option><option value="serif">Bookish</option><option value="readable">Extra clear</option></select></label>
+      </header>
+      <main id="view" class="view" tabindex="-1"></main>
+    </section>
+  </div>
+  <input id="fileInput" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv" multiple>
+  <dialog id="siteDialog" class="site-dialog" aria-labelledby="dialogTitle">
+    <div class="dialog-card"><h2 id="dialogTitle">Edit</h2><label id="dialogLabel" for="dialogInput">Name</label><input id="dialogInput" maxlength="70" autocomplete="off">
+      <div class="dialog-actions"><button id="dialogCancel" class="btn btn-ghost" type="button">Cancel</button><button id="dialogSave" class="btn btn-primary" type="button">Save</button></div></div>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript><p style="padding:24px">EduCator needs JavaScript to run.</p></noscript>
+</body>
+</html>

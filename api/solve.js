@@ -10,6 +10,8 @@ const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 8000;
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 const SYSTEM_PROMPT='You are EduCator, a warm, thoughtful tutor who helps learners understand subjects across math, science, writing, languages, history, technology, and everyday topics. Be patient, encouraging, accurate, and age-appropriate. Explain concepts clearly, ask helpful follow-up questions when needed, and carefully analyze any image or document the learner attaches. For text or source questions, guide learning rather than simply doing graded work. Format answers in Markdown: short paragraphs, ## headings for longer answers, bullet or numbered lists for steps, **bold** for key terms, and tables when comparing things. Write math in LaTeX with $...$ inline and $$...$$ for displayed equations. Keep answers focused; avoid unnecessary length.';
+const JSON_PROMPT='You are EduCator, an expert curriculum designer and tutor. You generate structured study materials (learning plans, lessons, quizzes) for a learner. Respond ONLY with a single valid JSON object that matches the shape requested by the user message. Do not wrap it in code fences or add commentary. String values may use Markdown, and math must use LaTeX with $...$ (escape backslashes correctly for JSON). Make content accurate, well-ordered, and matched to the learner\'s level.';
+const MAX_CONTEXT_LENGTH = 6000;
 const ALLOWED_MIME = new Set(['image/jpeg','image/png','image/webp','image/gif','application/pdf','text/plain','text/markdown','text/csv']);
 function send(res,status,body){res.setHeader('X-EduCator-Commit',COMMIT);return res.status(status).json(body)}
 function parseAttachment(file,budget){
@@ -48,9 +50,15 @@ export default async function handler(req,res){
   const contents=readMessages(body);if(!contents)return send(res,400,{error:'Send up to 30 valid messages with supported attachments (max 2 MB total).'});
   const apiKey=(process.env.GEMINI_API_KEY||'').trim();if(!apiKey)return send(res,500,{error:'The learning service is not configured yet.'});
   const model=(process.env.GEMINI_MODEL||'gemini-2.5-flash').trim().replace(/^models\//,'');
-  const stream=body?.stream===true;
+  // format:'json' asks for a structured JSON object (lesson plans, quizzes); it is never streamed.
+  const json=body?.format==='json';
+  const stream=body?.stream===true&&!json;
+  // Optional learner/notebook context (goal, level, plan, progress) appended to the system prompt.
+  const context=typeof body?.context==='string'?body.context.trim().slice(0,MAX_CONTEXT_LENGTH):'';
+  const system=(json?JSON_PROMPT:SYSTEM_PROMPT)+(context?`\n\n--- Learner context ---\n${context}`:'');
   const endpoint=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:${stream?'streamGenerateContent?alt=sse':'generateContent'}`;
-  const payload=JSON.stringify({systemInstruction:{parts:[{text:SYSTEM_PROMPT}]},contents,generationConfig:{temperature:0.45,maxOutputTokens:4096}});
+  const generationConfig=json?{temperature:0.6,maxOutputTokens:8192,responseMimeType:'application/json'}:{temperature:0.45,maxOutputTokens:4096};
+  const payload=JSON.stringify({systemInstruction:{parts:[{text:system}]},contents,generationConfig});
   const textOf=(chunk)=>(chunk?.candidates?.[0]?.content?.parts||[]).filter(part=>!part.thought).map(part=>part.text||'').join('');
   try{
     const request=()=>fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},body:payload});
