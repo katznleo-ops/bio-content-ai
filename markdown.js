@@ -5,9 +5,18 @@
 (function () {
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // Models often put plain words inside math ("$Density = \\frac{mass}{volume}$"). KaTeX would set
+  // every letter as a separate italic variable, so runs of real words are wrapped in \\text{} first.
+  function tidyTex(tex) {
+    const keep = [];
+    const held = tex.replace(/\\(?:text|textbf|textit|mathrm|mathbf|mathit|operatorname|mbox|begin|end)\s*\{[^{}]*\}/g, (m) => `\u0001${keep.push(m) - 1}\u0001`);
+    const wrapped = held.replace(/(^|[^\\A-Za-z])([A-Za-z]{3,}(?:[ \t]+[A-Za-z]{2,})*)/g, (m, pre, words) => `${pre}\\text{${words}}`);
+    return wrapped.replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
+  }
+
   function renderMath(tex, display) {
     if (window.katex) {
-      try { return window.katex.renderToString(tex, { displayMode: display, throwOnError: false, output: 'html' }); } catch {}
+      try { return window.katex.renderToString(tidyTex(tex), { displayMode: display, throwOnError: false, output: 'html' }); } catch {}
     }
     return display ? `<div class="math-fallback">${esc(tex)}</div>` : `<code>${esc(tex)}</code>`;
   }
@@ -25,8 +34,8 @@
     text = text.replace(/\\\((.+?)\\\)|(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (m, a, pre, b) =>
       a !== undefined ? hold(renderMath(a, false)) : pre + hold(renderMath(b, false)));
 
-    // 2. Escape everything else.
-    text = esc(text);
+    // 2. A backslash-escaped dollar sign is just a dollar sign. Then escape everything else.
+    text = esc(text.replace(/\\\$/g, '$'));
 
     const inline = (s) => s
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, label, url) => hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`))

@@ -30,6 +30,14 @@
   const GRADES = { elementary: 'Elementary (K–5)', middle: 'Middle school (6–8)', high: 'High school (9–12)', college: 'College / university', adult: 'Adult / self-study' };
   const LEVELS = { new: 'Just starting out', basics: 'Know the basics', intermediate: 'Intermediate', advanced: 'Advanced' };
   const PACES = { light: '15–20 min, a few times a week', steady: 'About 30 min most days', intensive: 'An hour or more a day' };
+  const CONFIDENCE = { guess: 'Just guessing', fairly: 'Fairly sure', certain: 'Certain' };
+  // "I'm stuck" buttons under the tutor's latest reply. Each sends a short request; the server's tutoring rules keep it from revealing answers.
+  const HINTS = [
+    { id: 'hint', icon: '💡', label: 'Give me a hint', text: '💡 Can I have a hint? Just a small nudge, please.' },
+    { id: 'bigger', icon: '🔎', label: 'A bigger hint', text: '🔎 I\'m still stuck. Can I have a bigger hint?' },
+    { id: 'example', icon: '🧩', label: 'Show a similar example', text: '🧩 Can you show me a similar example worked out, with different numbers or content?' },
+    { id: 'different', icon: '🔄', label: 'Explain it differently', text: '🔄 Can you explain that a different way, maybe with an analogy or a picture in words?' }
+  ];
   const DIFFICULTIES = { easier: 'Easier', matched: 'Just right', challenge: 'Challenge me' };
   // The original pastel subject cards; each opens a pre-filled notebook form.
   // The pastel subject cards. They only pick a subject area: the learner fills in the rest.
@@ -64,7 +72,8 @@
   // ---------- State ----------
   let chats = load(KEYS.chats, null);
   let notebooks = load(KEYS.notebooks, null);
-  let route = { view: 'home' }, lastKey = null;
+  let route = { view: 'home' }, lastKey = null, lastAnimKey = null, flash = null;
+  const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   let pendingFiles = [], busy = false, streaming = null, frame = 0, chatQuery = '', draftTemplate = null;
   const jobs = {};      // in-flight generations, e.g. jobs['plan:<nbId>'] = true
   const jobErrors = {}; // last error message per job key
@@ -176,7 +185,7 @@
     if (!force && key === lastKey) return;
     lastKey = key;
     route = parseRoute();
-    pendingFiles = [];
+    pendingFiles = []; stopSpeech(); stopDictation();
     const nb = route.nbId ? findNb(route.nbId) : null;
     if (route.nbId && !nb) return go('#/', { replace: true });
     let chat = null, quiz = null;
@@ -188,6 +197,9 @@
       quiz = nb.quizzes.find((q) => q.id === route.quizId);
       if (!quiz) return go(`#/nb/${nb.id}/quizzes`, { replace: true });
     }
+    // Snapshot what is on screen so the new render can animate from it.
+    const routeChanged = key !== lastAnimKey; lastAnimKey = key;
+    const before = { bars: [...el.view.querySelectorAll('.progress i')].map((b) => b.style.width), hadResult: !!el.view.querySelector('.result-card'), quizStep: el.view.querySelector('.quiz-card')?.dataset.step };
     document.body.dataset.mode = nb ? 'notebook' : 'general';
     document.body.style.setProperty('--accent', nb ? colorHex(nb.color) : COLORS[0].hex);
     renderSidebar(nb, chat);
@@ -198,10 +210,40 @@
     };
     (views[route.view] || viewHome)();
     renderCrumbs(nb, chat, quiz);
+    animateView(routeChanged, before);
     document.title = `${nb ? nb.name : chat ? chat.title : 'Study space'} · EduCator`;
     if (route.view !== 'chat') el.view.scrollTop = 0;
     closeSidebar();
   }
+  function animateView(routeChanged, before) {
+    const page = el.view.firstElementChild;
+    if (routeChanged && page) page.classList.add('enter');
+    if (reduceMotion()) { flash = null; return; }
+    // Progress bars glide from their previous width (or from zero on a new page).
+    const bars = [...el.view.querySelectorAll('.progress i')];
+    bars.forEach((bar, i) => {
+      const target = bar.style.width, from = routeChanged ? '0%' : before.bars[i];
+      if (from === undefined || from === target) return;
+      bar.style.transition = 'none'; bar.style.width = from;
+      void bar.offsetWidth; bar.style.transition = ''; bar.style.width = target;
+    });
+    // A new quiz question slides in; a fresh result counts up.
+    const card = el.view.querySelector('.quiz-card');
+    if (card && before.quizStep !== undefined && before.quizStep !== card.dataset.step) card.classList.add('slide-in');
+    const result = el.view.querySelector('.result-card');
+    if (result && !before.hadResult) {
+      result.classList.add('pop-in');
+      const scoreEl = result.querySelector('.result-score'), target = Number(scoreEl?.dataset.score) || 0, small = scoreEl?.querySelector('small')?.outerHTML || '';
+      if (scoreEl && target > 0) {
+        const start = performance.now(), dur = 700;
+        const tick = (now) => { const p = Math.min(1, (now - start) / dur), eased = 1 - Math.pow(1 - p, 3); scoreEl.innerHTML = `${Math.round(target * eased)}${small}`; if (p < 1 && scoreEl.isConnected) requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+      }
+    }
+    if (flash?.type === 'lesson') el.view.querySelector(`.lesson-check[data-id="${flash.id}"]`)?.classList.add('pop');
+    flash = null;
+  }
+
   // Re-render the current route if it belongs to the given notebook (used after background jobs finish).
   function refreshIf(nbId) { if ((route.nbId || '') === (nbId || '') && route.view !== 'chat') render(true); else renderSidebar(route.nbId ? findNb(route.nbId) : null, route.view === 'chat' ? chats.find((c) => c.id === route.chatId) : null); }
 
@@ -279,6 +321,7 @@
       <div class="attachment-list"></div>
       <div class="composer-tools">
         <button type="button" class="composer-attach" data-action="attach" title="Attach a photo, PDF, or text file"><span aria-hidden="true">＋</span> Attach</button>
+        ${Recognition ? `<button type="button" class="composer-mic${dictation ? ' listening' : ''}" data-action="dictate" title="Speak your question" aria-label="Speak your question" aria-pressed="${!!dictation}"><span class="mic-dot" aria-hidden="true"></span><span class="mic-label">${dictation ? 'Listening…' : '🎙 Speak'}</span></button>` : ''}
         <span class="composer-hint">Enter to send · Shift + Enter for a new line</span>
         <button class="send-button" type="submit" aria-label="Send" title="Send"${busy ? ' disabled' : ''}>↑</button>
       </div></form>`;
@@ -322,15 +365,86 @@
     const body = m.text ? md(m.text) : '';
     return `<article class="message-row ${role}"><div class="message-avatar" aria-hidden="true">${role === 'assistant' ? 'E' : 'You'}</div>
       <div class="message-content"><div class="message-author">${role === 'assistant' ? 'EduCator' : 'You'}</div><div class="message-bubble">${body}${files}</div>
-      ${role === 'assistant' && !m.error ? '<div class="message-actions"><button type="button" data-action="copy-answer">Copy answer</button></div>' : ''}</div></article>`;
+      ${role === 'assistant' && !m.error ? `<div class="message-actions"><button type="button" data-action="copy-answer">Copy answer</button>${'speechSynthesis' in window ? '<button type="button" class="listen-button" data-action="listen">🔊 Listen</button>' : ''}</div>` : ''}</div></article>`;
   }
-  function appendMessage(m) {
+  function appendMessage(m, { animate = true } = {}) {
     const box = $('#messages'); if (!box) return;
     box.insertAdjacentHTML('beforeend', messageHtml(m));
     const row = box.lastElementChild;
+    if (animate) row.classList.add('msg-in');
+    const listen = row.querySelector('[data-action="listen"]');
+    if (listen) listen.addEventListener('click', (e) => { e.stopPropagation(); toggleSpeech(m.text, listen); });
     const copy = row.querySelector('[data-action="copy-answer"]');
     if (copy) copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText(m.text || ''); toast('Answer copied.'); } catch { toast('Could not access the clipboard.'); } });
   }
+  function renderHintBar(chat) {
+    const box = $('#messages'); if (!box) return;
+    box.querySelector('.hint-bar')?.remove();
+    const last = chat.messages[chat.messages.length - 1];
+    if (busy || !last || last.role !== 'assistant' || last.error) return;
+    const rows = box.querySelectorAll('.message-row.assistant'); const row = rows[rows.length - 1]; if (!row) return;
+    row.querySelector('.message-content').insertAdjacentHTML('beforeend', `<div class="hint-bar" role="group" aria-label="Need more help?"><span class="hint-label">Stuck?</span>${HINTS.map((h) => `<button type="button" class="hint-chip" data-action="hint" data-id="${h.id}"><span aria-hidden="true">${h.icon}</span>${h.label}</button>`).join('')}</div>`);
+  }
+
+  // ---------- Read aloud (speech synthesis) ----------
+  let speaking = null;
+  function texToSpeech(tex) {
+    let t = tex;
+    for (let i = 0; i < 3; i++) t = t.replace(/\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}/g, ' $1 over $2 ').replace(/\\sqrt\{([^{}]*)\}/g, ' the square root of $1 ').replace(/\\(?:text|mathrm|textbf|operatorname)\{([^{}]*)\}/g, ' $1 ');
+    return t.replace(/\^\{?2\}?/g, ' squared ').replace(/\^\{?3\}?/g, ' cubed ').replace(/\^\{([^{}]*)\}|\^(\w)/g, (m, a, b) => ` to the power of ${a || b} `)
+      .replace(/_\{([^{}]*)\}|_(\w)/g, (m, a, b) => ` sub ${a || b} `)
+      .replace(/\\times|\\cdot/g, ' times ').replace(/\\div/g, ' divided by ').replace(/\\pm/g, ' plus or minus ').replace(/\\leq?/g, ' is less than or equal to ').replace(/\\geq?/g, ' is greater than or equal to ')
+      .replace(/\\neq?/g, ' is not equal to ').replace(/\\approx/g, ' is approximately ').replace(/\\(?:to|rightarrow|Rightarrow)/g, ' gives ').replace(/\\(pi|theta|alpha|beta|gamma|delta|lambda|mu|sigma|omega|Delta)/g, ' $1 ')
+      .replace(/\\[a-zA-Z]+/g, ' ').replace(/=/g, ' equals ').replace(/\+/g, ' plus ').replace(/(\s)-(\s)|^-/g, '$1 minus $2').replace(/</g, ' is less than ').replace(/>/g, ' is greater than ').replace(/[{}\\]/g, ' ');
+  }
+  function speechText(markdown) {
+    return String(markdown || '')
+      .replace(/```[\s\S]*?```/g, ' (code example) ')
+      .replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\((.+?)\\\)|\$([^$\n]+?)\$/g, (m, a, b, c, d) => texToSpeech(a || b || c || d))
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/^\s*\|?\s*:?-{2,}.*$/gm, '').replace(/\|/g, ', ')
+      .replace(/^#{1,6}\s*/gm, '').replace(/^\s*[-*+]\s+/gm, '').replace(/[*_~`>#]/g, '').replace(/\s+/g, ' ').trim();
+  }
+  function stopSpeech() {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    if (speaking?.button) { speaking.button.textContent = '🔊 Listen'; speaking.button.classList.remove('speaking'); }
+    speaking = null;
+  }
+  function toggleSpeech(markdown, button) {
+    const wasThis = speaking?.button === button; stopSpeech(); if (wasThis) return;
+    // Chrome stops long utterances partway, so speak sentence-sized chunks in a queue.
+    const chunks = speechText(markdown).match(/[^.!?]+[.!?]*\s*/g) || [];
+    if (!chunks.length) return;
+    speaking = { button }; button.textContent = '■ Stop'; button.classList.add('speaking');
+    chunks.forEach((chunk, i) => {
+      const u = new SpeechSynthesisUtterance(chunk.trim()); u.rate = 1; u.lang = navigator.language || 'en-US';
+      if (i === chunks.length - 1) u.onend = () => { if (speaking?.button === button) stopSpeech(); };
+      u.onerror = () => { if (speaking?.button === button) stopSpeech(); };
+      window.speechSynthesis.speak(u);
+    });
+  }
+
+  // ---------- Voice input (speech recognition) ----------
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  let dictation = null;
+  function stopDictation() { if (dictation) { try { dictation.rec.stop(); } catch {} } }
+  function startDictation(form) {
+    const box = form.querySelector('textarea'), btn = form.querySelector('.composer-mic');
+    const rec = new Recognition(); rec.lang = navigator.language || 'en-US'; rec.interimResults = true; rec.continuous = true;
+    const base = box.value ? box.value.replace(/\s*$/, ' ') : '';
+    let finalText = '';
+    dictation = { rec, form };
+    const setState = (on) => { if (!btn.isConnected) return; btn.classList.toggle('listening', on); btn.setAttribute('aria-pressed', String(on)); btn.querySelector('.mic-label').textContent = on ? 'Listening…' : '🎙 Speak'; };
+    rec.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) finalText += e.results[i][0].transcript; else interim += e.results[i][0].transcript; }
+      box.value = base + finalText + interim; autoResize(box);
+    };
+    rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Microphone access is blocked. Allow it in your browser to speak your question.'); else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Voice input stopped. Please try again.'); };
+    rec.onend = () => { if (dictation?.rec === rec) dictation = null; setState(false); box.focus(); };
+    try { rec.start(); setState(true); } catch { dictation = null; toast('Voice input is not available right now.'); }
+  }
+
   function lessonOf(nb, chat) {
     if (!nb || !chat?.lessonId || !nb.plan) return null;
     const i = nb.plan.lessons.findIndex((l) => l.id === chat.lessonId);
@@ -345,7 +459,8 @@
     el.view.innerHTML = `<div class="chat-view">${banner}
       <div id="messages" class="messages" role="log" aria-live="polite">${empty ? `<div class="chat-empty"><h2>${nb ? `${esc(nb.icon)} New ${esc(nb.name)} session` : 'New chat'}</h2><p>Ask anything to get started.</p></div>` : ''}</div>
       <div class="chat-compose-area">${composer('chat', nb ? `Ask your ${nb.name} tutor…` : 'Ask a follow-up…')}</div></div>`;
-    chat.messages.forEach(appendMessage);
+    chat.messages.forEach((m) => appendMessage(m, { animate: false }));
+    renderHintBar(chat);
     const box = $('#messages'); box.scrollTop = box.scrollHeight;
     if (streaming && streaming.chatId === chat.id) { paintLive(); pinQuestion(); }
     $('#composer-chat').focus({ preventScroll: true });
@@ -374,7 +489,7 @@
     if (!row) {
       box.querySelector('.chat-empty')?.remove();
       box.querySelector('.scroll-spacer')?.remove();
-      box.insertAdjacentHTML('beforeend', '<article class="message-row assistant live-row"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
+      box.insertAdjacentHTML('beforeend', '<article class="message-row assistant live-row msg-in"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
       row = box.lastElementChild;
     }
     row.querySelector('.message-bubble').innerHTML = streaming.text ? md(streaming.text) : '<span class="typing-indicator"><i></i><i></i><i></i></span>';
@@ -392,7 +507,7 @@
     save();
     if (route.view === 'chat' && route.chatId === chat.id) { $('#messages .chat-empty')?.remove(); appendMessage(userMessage); renderCrumbs(nb, chat, null); }
     renderSidebar(nb, chat);
-    busy = true; document.querySelectorAll('.send-button').forEach((b) => { b.disabled = true; });
+    busy = true; document.querySelectorAll('.send-button').forEach((b) => { b.disabled = true; }); $('#messages .hint-bar')?.remove();
     streaming = { chatId: chat.id, text: '' }; paintLive(); pinQuestion();
     let answer = null;
     try {
@@ -419,7 +534,7 @@
       streaming = null; busy = false;
       chat.updatedAt = Date.now(); save();
       if (route.view === 'chat' && route.chatId === chat.id) {
-        $('#messages .live-row')?.remove(); $('#messages .scroll-spacer')?.remove(); appendMessage(answer); updateSpacer();
+        $('#messages .live-row')?.remove(); $('#messages .scroll-spacer')?.remove(); appendMessage(answer); renderHintBar(chat); updateSpacer();
       }
       document.querySelectorAll('.send-button').forEach((b) => { b.disabled = false; });
     }
@@ -469,7 +584,8 @@
   function diagnosticDetail(quiz, attempt) {
     return quiz.questions.map((q, i) => {
       const mine = attempt.answers[i], ok = mine === q.answer;
-      return `Q${i + 1} [${ok ? 'correct' : 'WRONG'}]: ${oneLine(q.question)}\n   my answer: ${oneLine(q.choices[mine] ?? '(none)', 120)}${ok ? '' : ` | correct answer: ${oneLine(q.choices[q.answer], 120)}`}`;
+      const c = attempt.confidence?.[i];
+      return `Q${i + 1} [${ok ? 'correct' : 'WRONG'}${c ? `, I was ${CONFIDENCE[c].toLowerCase()}` : ''}]: ${oneLine(q.question)}\n   my answer: ${oneLine(q.choices[mine] ?? '(none)', 120)}${ok ? '' : ` | correct answer: ${oneLine(q.choices[q.answer], 120)}`}`;
     }).join('\n');
   }
   function assessmentText(a) {
@@ -489,7 +605,7 @@ What I told you when I set up the notebook:
 My diagnostic score: ${attempt.score}/${attempt.total}. Question by question (ordered roughly from easier to harder):
 ${diagnosticDetail(quiz, attempt)}
 
-Compare my actual results with what I said I struggle with: where do they match, and where do they differ (for example, I may be stronger than I think in one area, or have a gap I didn't mention)? Look for patterns across my wrong answers (a shared misconception, a skill that keeps tripping me up, or a point where the difficulty breaks down).
+Compare my actual results with what I said I struggle with: where do they match, and where do they differ (for example, I may be stronger than I think in one area, or have a gap I didn't mention)? Look for patterns across my wrong answers (a shared misconception, a skill that keeps tripping me up, or a point where the difficulty breaks down). Use my confidence too: wrong answers I was certain about point to misconceptions, and right answers I was only guessing on are not secure yet.
 
 Return JSON with exactly this shape:
 {"headline": string (one short, encouraging sentence summing up where I am), "summary": string (2-4 sentences speaking directly to me as my tutor: honest, warm, and specific, comparing my results with what I told you), "selfReport": "matches" | "partly" | "differs", "strengths": [1-3 short strings], "gaps": [1-4 short strings naming specific skills or concepts], "patterns": [0-3 short strings describing patterns in my mistakes], "startingPoint": string (one sentence on where my learning plan should start)}
@@ -671,8 +787,13 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     $('input[name="grade"]')?.focus({ preventScroll: true });
   }
   function wizardStep(form, step) {
+    const dir = step > Number(form.dataset.step) ? 'forward' : 'back';
     form.dataset.step = step;
-    form.querySelectorAll('.wizard-step').forEach((sec) => { sec.hidden = sec.dataset.step !== String(step); });
+    form.querySelectorAll('.wizard-step').forEach((sec) => {
+      sec.hidden = sec.dataset.step !== String(step);
+      sec.classList.remove('step-forward', 'step-back');
+      if (!sec.hidden) { void sec.offsetWidth; sec.classList.add(`step-${dir}`); }
+    });
     form.querySelectorAll('.wizard-steps li').forEach((li, i) => li.classList.toggle('on', i < step));
     el.view.scrollTop = 0;
   }
@@ -750,7 +871,8 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   function viewPlan(nb) {
     const key = `plan:${nb.id}`;
     if (!nb.plan || jobs[key]) {
-      el.view.innerHTML = `<div class="page narrow"><header class="page-hero"><span class="eyebrow">Learning plan</span><h1>${esc(nb.icon)} ${esc(nb.name)}</h1></header>${nextLessonCard(nb)}</div>`;
+      el.view.innerHTML = `<div class="page narrow"><header class="page-hero"><span class="eyebrow">Learning plan</span><h1>${esc(nb.icon)} ${esc(nb.name)}</h1></header>${nextLessonCard(nb)}
+        ${jobs[key] ? `<ol class="lesson-list skeleton-list" aria-hidden="true">${[0, 1, 2, 3].map(() => '<li class="lesson skeleton"><span class="sk-circle"></span><div class="lesson-body"><span class="sk-line w30"></span><span class="sk-line w70 tall"></span><span class="sk-line w90"></span><span class="sk-line w50"></span></div></li>').join('')}</ol>` : ''}</div>`;
       return;
     }
     const p = nbProgress(nb);
@@ -814,31 +936,37 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       const index = pr.answers.length - (pr.revealed ? 1 : 0);
       const q = quiz.questions[index];
       const picked = pr.revealed ? pr.answers[index] : null;
+      const conf = pr.revealed ? (pr.confidence || [])[index] : null;
       const correctSoFar = pr.answers.filter((a, i) => (pr.revealed || i < pr.answers.length) && a === quiz.questions[i].answer).length;
       el.view.innerHTML = `<div class="page narrow quiz-page">
         <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">Question ${index + 1} of ${total} · ${correctSoFar} correct</span></div>
         <div class="progress lg"><i style="width:${Math.round((index + (pr.revealed ? 1 : 0)) / total * 100)}%"></i></div>
-        <div class="card quiz-card"><span class="eyebrow">${esc(quiz.title)}</span><div class="quiz-question md">${md(q.question)}</div>
+        <div class="card quiz-card" data-step="${index}"><span class="eyebrow">${esc(quiz.title)}</span><div class="quiz-question md">${md(q.question)}</div>
           <div class="choices">${q.choices.map((c, i) => {
-            const state = picked === null ? '' : i === q.answer ? ' correct' : i === picked ? ' wrong' : ' dim';
-            return `<button type="button" class="choice${state}" data-action="answer" data-index="${i}"${picked !== null ? ' disabled' : ''}><span class="choice-key">${'ABCDEF'[i]}</span><span class="choice-text">${mdInline(c)}</span></button>`;
+            const state = picked === null ? (pr.pending === i ? ' selected' : '') : i === q.answer ? ' correct' : i === picked ? ' wrong' : ' dim';
+            return `<button type="button" class="choice${state}" data-action="answer" data-index="${i}"${picked !== null ? ' disabled' : ''} aria-pressed="${pr.pending === i}"><span class="choice-key">${'ABCDEF'[i]}</span><span class="choice-text">${mdInline(c)}</span></button>`;
           }).join('')}</div>
-          ${picked !== null ? `<div class="feedback ${picked === q.answer ? 'good' : 'bad'}"><strong>${picked === q.answer ? '✓ Correct!' : '✗ Not quite.'}</strong>${q.explanation ? `<div class="md">${md(q.explanation)}</div>` : ''}</div>
-          <div class="form-actions"><button type="button" class="btn btn-primary btn-lg" data-action="next-question">${index + 1 === total ? 'See results' : 'Next question →'}</button></div>` : '<p class="muted small">Tip: press 1–4 to pick an answer.</p>'}
+          ${picked === null ? `<div class="confidence${Number.isInteger(pr.pending) ? ' show' : ''}" role="group" aria-label="How sure are you?"><span>How sure are you?</span>${Object.entries(CONFIDENCE).map(([k, label], i) => `<button type="button" class="conf-chip conf-${k}" data-action="confidence" data-level="${k}"${Number.isInteger(pr.pending) ? '' : ' disabled'}><kbd>${['G', 'F', 'C'][i]}</kbd>${label}</button>`).join('')}</div>` : ''}
+          ${picked !== null ? `<div class="feedback ${picked === q.answer ? 'good' : 'bad'}"><strong>${picked === q.answer ? (conf === 'guess' ? '✓ Correct! Nice instinct. Make sure you know why.' : '✓ Correct!') : conf === 'certain' ? '✗ Not quite, and you were sure. That’s worth a closer look.' : '✗ Not quite.'}</strong>${q.explanation ? `<div class="md">${md(q.explanation)}</div>` : ''}</div>
+          <div class="form-actions"><button type="button" class="btn btn-primary btn-lg" data-action="next-question">${index + 1 === total ? 'See results' : 'Next question →'}</button></div>` : '<p class="muted small quiz-tip">Pick an answer (1–4), then say how sure you are (G, F, or C).</p>'}
         </div></div>`;
       return;
     }
     const a = quiz.attempts[quiz.attempts.length - 1], ratio = a.score / a.total;
     const missed = quiz.questions.map((q, i) => ({ q, i, mine: a.answers[i] })).filter((x) => x.mine !== x.q.answer);
     const assessing = quiz.kind === 'diagnostic' && !!jobs[`assess:${quiz.id}`];
+    const confs = a.confidence || [];
+    const sureWrong = quiz.questions.filter((q, i) => confs[i] === 'certain' && a.answers[i] !== q.answer).length;
+    const luckyRight = quiz.questions.filter((q, i) => confs[i] === 'guess' && a.answers[i] === q.answer).length;
+    const confNote = confs.length ? `<div class="conf-summary">${sureWrong ? `<span class="conf-pill warn">${plural(sureWrong, 'answer')} you were sure of ${sureWrong === 1 ? 'was' : 'were'} wrong</span>` : ''}${luckyRight ? `<span class="conf-pill info">${luckyRight} lucky guess${luckyRight === 1 ? '' : 'es'}</span>` : ''}${!sureWrong && !luckyRight ? '<span class="conf-pill good">Your confidence matched your answers</span>' : ''}</div>` : '';
     el.view.innerHTML = `<div class="page narrow quiz-page">
       <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">${plural(quiz.attempts.length, 'attempt')}</span></div>
-      <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score">${a.score}<small>/${a.total}</small></div>
+      <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score" data-score="${a.score}">${a.score}<small>/${a.total}</small></div>${confNote}
         ${quiz.kind === 'diagnostic' ? assessmentHtml(nb, quiz, a) : ''}
         <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? 'Your tutor uses these results in your sessions.' : 'Next, let’s turn this into a plan made for you.') : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
         <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
       <h2 class="section-title">Review</h2>
-      <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div></div>
+      <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div>${confs[i] ? `<span class="conf-tag conf-${confs[i]}">${CONFIDENCE[confs[i]]}</span>` : ''}</div>
         ${ok ? '' : `<p><span class="label">Your answer</span> ${mdInline(q.choices[a.answers[i]] ?? '–')}</p>`}<p><span class="label">Correct answer</span> ${mdInline(q.choices[q.answer])}</p>${q.explanation ? `<div class="md muted-md">${md(q.explanation)}</div>` : ''}</li>`; }).join('')}</ol></div>`;
   }
 
@@ -855,7 +983,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   }
   function toggleLesson(nb, lessonId) {
     const l = nb.plan?.lessons.find((x) => x.id === lessonId); if (!l) return;
-    l.done = !l.done; l.doneAt = l.done ? Date.now() : 0; nb.updatedAt = Date.now(); if (l.done) nb.lastStudiedAt = Date.now(); save();
+    l.done = !l.done; l.doneAt = l.done ? Date.now() : 0; if (l.done) flash = { type: 'lesson', id: l.id }; nb.updatedAt = Date.now(); if (l.done) nb.lastStudiedAt = Date.now(); save();
     if (l.done) toast(nbProgress(nb).done === nbProgress(nb).total ? 'Plan complete! Amazing work. 🎉' : 'Lesson complete. Nice work! ✓');
     render(true);
   }
@@ -902,16 +1030,30 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       const nb = currentNb(); const quiz = nb?.quizzes.find((q) => q.id === t.dataset.id); if (!quiz) return;
       showDialog({ title: 'Delete quiz?', label: `Delete “${quiz.title}” and its results?`, confirm: true, danger: true, saveText: 'Delete', onSave: () => { nb.quizzes = nb.quizzes.filter((q) => q.id !== quiz.id); save(); render(true); } });
     },
+    // Picking an answer only selects it; it's revealed after the learner says how sure they are.
     answer: (t) => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.progress || quiz.progress.revealed) return;
-      quiz.progress.answers.push(Number(t.dataset.index)); quiz.progress.revealed = true; nb.lastStudiedAt = Date.now(); save(); render(true);
+      quiz.progress.pending = Number(t.dataset.index); save();
+      document.querySelectorAll('.choice').forEach((c) => { const on = Number(c.dataset.index) === quiz.progress.pending; c.classList.toggle('selected', on); c.setAttribute('aria-pressed', String(on)); });
+      const panel = $('.confidence'); panel.classList.add('show'); panel.querySelectorAll('button').forEach((b) => { b.disabled = false; });
     },
+    confidence: (t) => {
+      const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); const pr = quiz?.progress;
+      if (!pr || pr.revealed || !Number.isInteger(pr.pending)) return;
+      pr.answers.push(pr.pending); (pr.confidence ||= []).push(t.dataset.level); pr.pending = null; pr.revealed = true;
+      nb.lastStudiedAt = Date.now(); save(); render(true);
+    },
+    hint: (t) => {
+      const chat = chats.find((c) => c.id === route.chatId), h = HINTS.find((x) => x.id === t.dataset.id);
+      if (chat && h) sendMessage(chat, h.text);
+    },
+    dictate: (t) => { if (dictation) stopDictation(); else startDictation(t.closest('form')); },
     'next-question': () => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.progress) return;
       quiz.progress.revealed = false;
       if (quiz.progress.answers.length >= quiz.questions.length) {
         const answers = quiz.progress.answers;
-        quiz.attempts.push({ at: Date.now(), answers, total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length });
+        quiz.attempts.push({ at: Date.now(), answers, confidence: quiz.progress.confidence || [], total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length });
         quiz.progress = null;
         save(); render(true);
         if (quiz.kind === 'diagnostic') assessDiagnostic(nb, quiz);
@@ -919,7 +1061,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       }
       save(); render(true);
     },
-    'retake-quiz': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz) return; quiz.progress = { answers: [], revealed: false }; save(); render(true); },
+    'retake-quiz': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz) return; quiz.progress = { answers: [], confidence: [], revealed: false }; save(); render(true); },
     'review-mistakes': () => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.attempts.length) return;
       const a = quiz.attempts[quiz.attempts.length - 1];
@@ -938,6 +1080,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   document.addEventListener('keydown', (e) => {
     if (route.view !== 'quiz' || e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^[1-6]$/.test(e.key)) $(`.choice[data-index="${Number(e.key) - 1}"]:not([disabled])`)?.click();
+    else if (/^[gfc]$/i.test(e.key)) $(`.conf-chip.conf-${{ g: 'guess', f: 'fairly', c: 'certain' }[e.key.toLowerCase()]}:not([disabled])`)?.click();
     else if (e.key === 'Enter' && $('[data-action="next-question"]')) { e.preventDefault(); $('[data-action="next-question"]').click(); }
   });
 
@@ -954,6 +1097,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       const box = form.querySelector('textarea'), text = box.value.trim();
       if (!text && !pendingFiles.length) return;
       if (busy) { toast('Please wait for the current answer to finish.'); return; }
+      stopDictation();
       const files = pendingFiles.map((f) => ({ ...f })); pendingFiles = []; box.value = ''; autoResize(box); renderAttachments();
       const nb = currentNb();
       let chat;

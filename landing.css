@@ -162,3 +162,27 @@ a:focus-visible,summary:focus-visible{outline:3px solid #aa9ef3;outline-offset:2
   .welcome-footer{padding:16px 20px;flex-direction:column}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}html{scroll-behavior:auto}}
+
+/* ---------- Motion ---------- */
+:root{--ease-out:cubic-bezier(.22,1,.36,1);--ease-spring:cubic-bezier(.34,1.4,.64,1)}
+@keyframes heroUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes heroArt{from{opacity:0;transform:scale(.94) rotate(-2deg)}to{opacity:1;transform:none}}
+@keyframes bookFloat{50%{translate:0 -8px}}
+@keyframes noteFloat{50%{translate:0 -6px;rotate:2deg}}
+.hero-copy>*{animation:heroUp .7s var(--ease-out) both}
+.hero-copy>*:nth-child(2){animation-delay:.08s}.hero-copy>*:nth-child(3){animation-delay:.16s}.hero-copy>*:nth-child(4){animation-delay:.24s}.hero-copy>*:nth-child(5){animation-delay:.32s}
+.hero-art{animation:heroArt .9s .15s var(--ease-out) both}
+.book-front{animation:bookFloat 6s ease-in-out infinite}
+.book-mid{animation:bookFloat 6s -2s ease-in-out infinite}
+.art-note{animation:noteFloat 5s -1s ease-in-out infinite}
+.js-reveal .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s var(--ease-out),transform .7s var(--ease-out)}
+.js-reveal .reveal.in{opacity:1;transform:none}
+.js-reveal .quiz-mock.reveal{transform:translateY(22px) rotate(-1deg)}
+.js-reveal .quiz-mock.reveal.in{transform:rotate(-1deg)}
+.nav-links a,.button,.faq summary,.feature-grid article,.path-grid article,.step{transition:background-color .2s var(--ease-out),color .2s var(--ease-out),border-color .2s var(--ease-out),box-shadow .25s var(--ease-out),transform .25s var(--ease-out)}
+.step:hover,.path-grid article:hover{transform:translateY(-3px);box-shadow:0 12px 26px #39335e12}
+.button:active{transform:translateY(0) scale(.98)}
+.faq details[open] p{animation:heroUp .35s var(--ease-out)}
+.faq summary:hover{color:var(--purple-dark)}
+.qm-c.right{animation:none}
+@media (prefers-reduced-motion:reduce){.hero-copy>*,.hero-art,.book-front,.book-mid,.art-note{animation:none!important}}

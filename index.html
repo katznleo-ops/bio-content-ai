@@ -7,7 +7,7 @@
   <meta name="description" content="EduCator is a friendly AI tutor. Ask anything, snap a photo of your homework, and build notebooks with personalised learning plans, lessons, and quizzes.">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&family=Nunito:wght@400;600;700;800&display=swap">
-  <link rel="stylesheet" href="./landing.css?v=9">
+  <link rel="stylesheet" href="./landing.css?v=10">
 </head>
 <body>
   <main class="welcome-screen">
@@ -92,5 +92,22 @@
     <section class="scroll-story story-ideas"><div class="story-copy"><span class="tiny-label">SMALL STEPS, BIG IDEAS</span><h2>Learn something new today.</h2><p>Bring the question. EduCator will work through the ideas with you.</p><a class="button button-dark parallax-cta" href="educator/app/">Open study space →</a></div></section>
     <footer class="welcome-footer"><span>EduCator ✳ built for curious minds</span><span>One question can open a whole new world.</span></footer>
   </main>
+  <script>
+    // Fade sections in as they scroll into view. Without JavaScript (or with reduced motion) everything is simply visible.
+    (function () {
+      if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      document.documentElement.classList.add('js-reveal');
+      var groups = ['.welcome-bottom > *', '.section-intro', '.feature-grid > article', '.steps > .step', '.spot-copy', '.quiz-mock', '.study-path-intro', '.path-grid > article', '.faq details', '.story-copy'];
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { rootMargin: '0px 0px -5% 0px', threshold: 0.08 });
+      groups.forEach(function (sel) {
+        document.querySelectorAll(sel).forEach(function (el, i) {
+          var siblings = el.parentElement ? Array.prototype.indexOf.call(el.parentElement.children, el) : i;
+          el.classList.add('reveal'); el.style.transitionDelay = Math.min(siblings, 5) * 70 + 'ms'; io.observe(el);
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
