@@ -108,7 +108,7 @@
   const diagnosticOf = (nb) => nb.quizzes.find((q) => q.kind === 'diagnostic');
   function diagnosticSummary(nb) {
     const q = diagnosticOf(nb); const a = q?.attempts[q.attempts.length - 1];
-    return a ? { quiz: q, attempt: a, missed: q.questions.filter((x, i) => a.answers[i] !== x.answer) } : null;
+    return a ? { quiz: q, attempt: a, missed: q.questions.filter((x, i) => a.answers[i] !== x.answer), assessment: a.assessment || null } : null;
   }
   const nbChats = (nb) => chats.filter((c) => c.notebookId === nb.id);
   const generalChats = () => chats.filter((c) => !c.notebookId);
@@ -439,6 +439,8 @@
       const next = nb.plan.lessons.find((l) => !l.done);
       if (next) lines.push(`Next lesson to study: ${next.title}.`);
     }
+    const dg = diagnosticSummary(nb);
+    if (dg?.assessment) lines.push(`Diagnostic (${dg.attempt.score}/${dg.attempt.total}). ${assessmentText(dg.assessment)}`);
     const { attempts } = quizStats(nb);
     if (attempts.length) {
       lines.push('Recent quiz results:');
@@ -463,6 +465,54 @@
   }
   const str = (v, max = 600) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
+  const oneLine = (t, max = 220) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  function diagnosticDetail(quiz, attempt) {
+    return quiz.questions.map((q, i) => {
+      const mine = attempt.answers[i], ok = mine === q.answer;
+      return `Q${i + 1} [${ok ? 'correct' : 'WRONG'}]: ${oneLine(q.question)}\n   my answer: ${oneLine(q.choices[mine] ?? '(none)', 120)}${ok ? '' : ` | correct answer: ${oneLine(q.choices[q.answer], 120)}`}`;
+    }).join('\n');
+  }
+  function assessmentText(a) {
+    if (!a) return '';
+    return [`Tutor's assessment: ${a.headline}`, a.summary, a.strengths.length ? `Strengths: ${a.strengths.join('; ')}` : '', a.gaps.length ? `Gaps to work on: ${a.gaps.join('; ')}` : '', a.patterns.length ? `Patterns in mistakes: ${a.patterns.join('; ')}` : '', a.startingPoint ? `Recommended starting point: ${a.startingPoint}` : ''].filter(Boolean).join('\n');
+  }
+
+  // After a diagnostic, compare the results with what the learner said about themselves.
+  function assessmentPrompt(nb, quiz, attempt) {
+    return `I just finished a diagnostic quiz for my notebook "${nb.name}". Please assess where I am right now.
+
+What I told you when I set up the notebook:
+- Grade / level: ${gradeLabel(nb) || 'Not specified'}
+- What I'm struggling with: ${nb.struggles || 'Not specified'}
+- My goal: ${nb.goal || 'Not specified'}
+
+My diagnostic score: ${attempt.score}/${attempt.total}. Question by question (ordered roughly from easier to harder):
+${diagnosticDetail(quiz, attempt)}
+
+Compare my actual results with what I said I struggle with: where do they match, and where do they differ (for example, I may be stronger than I think in one area, or have a gap I didn't mention)? Look for patterns across my wrong answers (a shared misconception, a skill that keeps tripping me up, or a point where the difficulty breaks down).
+
+Return JSON with exactly this shape:
+{"headline": string (one short, encouraging sentence summing up where I am), "summary": string (2-4 sentences speaking directly to me as my tutor: honest, warm, and specific, comparing my results with what I told you), "selfReport": "matches" | "partly" | "differs", "strengths": [1-3 short strings], "gaps": [1-4 short strings naming specific skills or concepts], "patterns": [0-3 short strings describing patterns in my mistakes], "startingPoint": string (one sentence on where my learning plan should start)}
+Describe skills and concepts; do not just list the questions.`;
+  }
+  function normalizeAssessment(d) {
+    const list = (v, n) => (Array.isArray(v) ? v : []).map((x) => str(x, 240)).filter(Boolean).slice(0, n);
+    const headline = str(d?.headline, 200), summary = str(d?.summary, 1200);
+    if (!headline && !summary) return null;
+    return { headline, summary, selfReport: ['matches', 'partly', 'differs'].includes(d?.selfReport) ? d.selfReport : '', strengths: list(d?.strengths, 3), gaps: list(d?.gaps, 4), patterns: list(d?.patterns, 3), startingPoint: str(d?.startingPoint, 300), at: Date.now() };
+  }
+  async function assessDiagnostic(nb, quiz) {
+    const attempt = quiz.attempts[quiz.attempts.length - 1]; if (!attempt) return;
+    const key = `assess:${quiz.id}`; if (jobs[key]) return;
+    jobs[key] = true; delete jobErrors[key]; refreshIf(nb.id);
+    try {
+      const assessment = normalizeAssessment(await generateJSON(assessmentPrompt(nb, quiz, attempt), notebookContext({ ...nb, plan: null, quizzes: [] })));
+      if (!assessment) throw new Error('Your tutor could not review the results. Please try again.');
+      attempt.assessment = assessment; save();
+    } catch (e) { jobErrors[key] = e.message; }
+    finally { delete jobs[key]; refreshIf(nb.id); }
+  }
+
   function planPrompt(nb) {
     const d = diagnosticSummary(nb);
     return `Create a personalised learning plan for my notebook "${nb.name}".
@@ -470,11 +520,17 @@ Grade / level: ${gradeLabel(nb) || 'Not specified'}
 What I'm struggling with: ${nb.struggles || 'Not specified'}
 Goal: ${nb.goal || `Build a solid understanding of ${nb.name}.`}
 Time I can study: ${PACES[nb.pace]}${nb.deadline ? `\nI'm working toward: ${nb.deadline}` : ''}
-${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Questions I missed:\n${d.missed.map((q) => `- ${q.question.replace(/\s+/g, ' ').slice(0, 160)}`).join('\n') || '- none'}` : 'No diagnostic taken yet.'}
+${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Question by question (ordered roughly from easier to harder):\n${diagnosticDetail(d.quiz, d.attempt)}${d.assessment ? `\n\n${assessmentText(d.assessment)}` : ''}` : 'No diagnostic taken yet.'}
 
 Return JSON with exactly this shape:
 {"title": string, "overview": string (2-3 sentences explaining the approach), "lessons": [{"title": string, "summary": string (1-2 sentences), "objectives": [3-4 short strings], "minutes": number (estimated study time)}]}
-Use 6 to 10 lessons. Start at the right point for my grade${d ? ' and diagnostic results (skip or shorten what I clearly already know)' : ''}, spend extra time on what I'm struggling with, and order lessons from foundations to mastery. Make lesson titles short and specific.`;
+Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
+- Start where my diagnostic shows my understanding breaks down, not at the very beginning. Shorten or combine topics I clearly already know into a quick review.
+- Give each gap and mistake pattern from my diagnostic its own lesson or a clear objective, and revisit the biggest gap again later in the plan.
+- Where my results differ from what I said I struggle with, trust the results, but still address what I said worries me.
+- In the overview, tell me in 2-3 sentences how the plan responds to my diagnostic results.` : `
+- Start at the right point for my grade, spend extra time on what I'm struggling with, and include an early checkpoint.`}
+- Make lesson titles short and specific, and write objectives as things I'll be able to do.`;
   }
   function normalizePlan(data) {
     const lessons = (Array.isArray(data?.lessons) ? data.lessons : []).map((l) => ({
@@ -637,7 +693,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       const err = jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : '';
       const diag = diagnosticOf(nb), done = diagnosticSummary(nb);
       if (jobs[`quiz:${nb.id}`]) return `<div class="card next-up loading"><div class="spinner"></div><div><h3>Writing your diagnostic…</h3><p>This usually takes 10–20 seconds.</p></div></div>`;
-      if (done) return `<div class="card next-up"><div><span class="eyebrow">Diagnostic done · ${done.attempt.score}/${done.attempt.total}</span><h3>Build your learning plan</h3><p>Your plan will start where your diagnostic says you are and focus on what you're struggling with.</p>${err}</div><button type="button" class="btn btn-primary btn-lg" data-action="generate-plan">✦ Build my plan</button></div>`;
+      if (done) return `<div class="card next-up"><div><span class="eyebrow">Diagnostic done · ${done.attempt.score}/${done.attempt.total}</span><h3>Build your learning plan</h3><p>${done.assessment ? `${esc(done.assessment.headline)} ` : ''}Your plan will start where your diagnostic says you are and focus on what you're struggling with.</p>${err}</div><button type="button" class="btn btn-primary btn-lg" data-action="generate-plan">✦ Build my plan</button></div>`;
       if (diag) return `<div class="card next-up"><div><span class="eyebrow">Step 1</span><h3>Finish your diagnostic</h3><p>You're partway through. Finish it so your plan starts in the right place.</p></div><a class="btn btn-primary btn-lg" href="#/nb/${nb.id}/quiz/${diag.id}">Continue diagnostic →</a></div>`;
       return `<div class="card next-up"><div><span class="eyebrow">Recommended first step</span><h3>Take a quick diagnostic</h3><p>8 questions to find what you already know, so your learning plan starts in the right place.</p>${err}</div>
         <div class="next-up-actions"><button type="button" class="btn btn-primary btn-lg" data-action="diagnostic">✦ Start diagnostic</button><button type="button" class="btn btn-ghost" data-action="generate-plan">Skip, build my plan</button></div></div>`;
@@ -672,6 +728,22 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         <section class="card"><div class="card-head"><h3>Recent quiz results</h3><a href="#/nb/${nb.id}/quizzes">All</a></div>
           ${attempts.slice(0, 5).map((a) => `<a class="list-row" href="#/nb/${nb.id}/quiz/${a.quiz.id}"><span class="score-dot ${scoreClass(a.score / a.total)}">${Math.round(a.score / a.total * 100)}%</span><span class="list-title">${esc(a.quiz.title)}</span><small>${timeAgo(a.at)}</small></a>`).join('') || '<p class="muted">No quizzes taken yet.</p>'}</section>
       </div></div>`;
+  }
+  const SELF_REPORT = { matches: 'Matches what you told me', partly: 'Partly matches what you told me', differs: 'Different from what you expected' };
+  function assessmentHtml(nb, quiz, attempt) {
+    const key = `assess:${quiz.id}`;
+    if (jobs[key]) return `<div class="assessment loading"><div class="spinner"></div><div><strong>Your tutor is reviewing your answers…</strong><p>Comparing your results with what you told us about ${esc(nb.name)}.</p></div></div>`;
+    const as = attempt.assessment;
+    if (!as) return `<div class="assessment empty"><p>${jobErrors[key] ? esc(jobErrors[key]) : 'Get your tutor’s take on these results.'}</p><button type="button" class="btn btn-soft" data-action="retry-assessment">${jobErrors[key] ? 'Try again' : 'Review my results'}</button></div>`;
+    const list = (title, items, cls) => (items.length ? `<div class="assess-list ${cls}"><h4>${title}</h4><ul>${items.map((x) => `<li>${mdInline(x)}</li>`).join('')}</ul></div>` : '');
+    return `<div class="assessment">
+      <div class="assess-head"><span class="assess-avatar" aria-hidden="true">E</span><div><span class="eyebrow">Your tutor's take</span><strong>${esc(as.headline)}</strong></div></div>
+      ${as.selfReport ? `<span class="assess-badge ${as.selfReport}">${SELF_REPORT[as.selfReport]}</span>` : ''}
+      <div class="md assess-summary">${md(as.summary)}</div>
+      <div class="assess-grid">${list('Already strong', as.strengths, 'good')}${list('Let’s work on', as.gaps, 'gap')}</div>
+      ${list('Patterns I noticed', as.patterns, 'pattern')}
+      ${as.startingPoint ? `<p class="assess-start"><strong>Where we’ll start:</strong> ${mdInline(as.startingPoint)}</p>` : ''}
+    </div>`;
   }
   const scoreClass = (r) => (r >= 0.8 ? 'good' : r >= 0.5 ? 'ok' : 'low');
 
@@ -758,11 +830,13 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     }
     const a = quiz.attempts[quiz.attempts.length - 1], ratio = a.score / a.total;
     const missed = quiz.questions.map((q, i) => ({ q, i, mine: a.answers[i] })).filter((x) => x.mine !== x.q.answer);
+    const assessing = quiz.kind === 'diagnostic' && !!jobs[`assess:${quiz.id}`];
     el.view.innerHTML = `<div class="page narrow quiz-page">
       <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">${plural(quiz.attempts.length, 'attempt')}</span></div>
       <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score">${a.score}<small>/${a.total}</small></div>
-        <p class="lead">${quiz.kind === 'diagnostic' ? (nb.plan ? 'Your tutor will use these results in your sessions.' : 'Nice work. Now let’s turn these results into a plan made for you.') : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
-        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
+        ${quiz.kind === 'diagnostic' ? assessmentHtml(nb, quiz, a) : ''}
+        <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? 'Your tutor uses these results in your sessions.' : 'Next, let’s turn this into a plan made for you.') : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
+        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
       <h2 class="section-title">Review</h2>
       <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div></div>
         ${ok ? '' : `<p><span class="label">Your answer</span> ${mdInline(q.choices[a.answers[i]] ?? '–')}</p>`}<p><span class="label">Correct answer</span> ${mdInline(q.choices[q.answer])}</p>${q.explanation ? `<div class="md muted-md">${md(q.explanation)}</div>` : ''}</li>`; }).join('')}</ol></div>`;
@@ -812,6 +886,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     },
     'wiz-next': (t) => { const form = t.closest('form'); const step = Number(form.dataset.step); if (validateStep(form, step)) wizardStep(form, step + 1); },
     'wiz-back': (t) => { const form = t.closest('form'); wizardStep(form, Number(form.dataset.step) - 1); },
+    'retry-assessment': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (quiz) assessDiagnostic(nb, quiz); },
     'plan-from-diagnostic': () => { const nb = currentNb(); if (!nb) return; go(`#/nb/${nb.id}/plan`); generatePlan(nb); },
     'generate-plan': () => { const nb = currentNb(); if (nb) generatePlan(nb); },
     'regenerate-plan': () => {
@@ -838,6 +913,9 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         const answers = quiz.progress.answers;
         quiz.attempts.push({ at: Date.now(), answers, total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length });
         quiz.progress = null;
+        save(); render(true);
+        if (quiz.kind === 'diagnostic') assessDiagnostic(nb, quiz);
+        return;
       }
       save(); render(true);
     },
