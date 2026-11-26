@@ -30,11 +30,12 @@
   const LEVELS = { new: 'Just starting out', basics: 'Know the basics', intermediate: 'Intermediate', advanced: 'Advanced' };
   const PACES = { light: '15–20 min, a few times a week', steady: 'About 30 min most days', intensive: 'An hour or more a day' };
   const DIFFICULTIES = { easier: 'Easier', matched: 'Just right', challenge: 'Challenge me' };
+  // The original pastel subject cards; each opens a pre-filled notebook form.
   const TEMPLATES = {
-    algebra: { name: 'Algebra', icon: '📐', color: 'violet', goal: 'Get confident solving equations, working with functions, and graphing.' },
-    biology: { name: 'Biology', icon: '🧬', color: 'green', goal: 'Understand cells, genetics, and evolution well enough to ace my next test.' },
-    writing: { name: 'Essay writing', icon: '📚', color: 'coral', goal: 'Write clear, well-structured essays with strong thesis statements and evidence.' },
-    spanish: { name: 'Spanish', icon: '🗣️', color: 'blue', goal: 'Hold simple everyday conversations in Spanish.' }
+    math: { tint: 'math', glyph: '∑', title: 'Math & numbers', caption: 'Make tricky ideas click', name: 'Math', icon: '📐', color: 'violet', goal: 'Get confident with the math I\'m studying right now, from the basics up.' },
+    science: { tint: 'science', glyph: '✳', title: 'Science & nature', caption: 'Find out how it works', name: 'Science', icon: '🧪', color: 'green', goal: 'Understand the science topics in my class well enough to explain them and ace my next test.' },
+    writing: { tint: 'writing', glyph: 'Aa', title: 'Writing & language', caption: 'Find the right words', name: 'Writing', icon: '📚', color: 'coral', goal: 'Write clear, well-structured essays with strong thesis statements and evidence.' },
+    history: { tint: 'history', glyph: '◷', title: 'History & society', caption: 'Connect past and present', name: 'History', icon: '🏛️', color: 'blue', goal: 'Understand key events, their causes, and why they still matter today.' }
   };
 
   // ---------- Small helpers ----------
@@ -226,7 +227,7 @@
   function renderSidebar(nb, chat) {
     if (!nb) {
       el.sidebarBody.innerHTML = `
-        <a class="btn btn-primary sb-new" href="#/"><span>＋</span> New chat</a>
+        <a class="sb-new" href="#/"><span class="plus-icon">＋</span> New conversation</a>
         <div class="sb-heading"><span>Notebooks</span><a class="sb-link" href="#/notebooks/new">＋ New</a></div>
         <nav class="sb-notebooks">${notebooks.map((n) => { const p = nbProgress(n); return `
           <a class="sb-notebook" href="#/nb/${n.id}" style="--nb:${colorHex(n.color)}"><span class="nb-icon">${esc(n.icon)}</span><span class="sb-nb-name">${esc(n.name)}</span>${p.total ? `<span class="sb-nb-pct">${p.pct}%</span>` : ''}</a>`; }).join('')
@@ -254,7 +255,7 @@
         ${tab('nb-quizzes', `#/nb/${nb.id}/quizzes`, '✦', 'Quizzes')}
         ${tab('nb-sessions', `#/nb/${nb.id}/sessions`, '✎', 'Sessions')}
       </nav>
-      <a class="btn btn-primary sb-new" href="#/nb/${nb.id}/sessions"><span>＋</span> New session</a>
+      <a class="sb-new" href="#/nb/${nb.id}/sessions"><span class="plus-icon">＋</span> New session</a>
       <div class="sb-heading"><span>Sessions in this notebook</span></div>
       <div class="sb-chats">${sessions.map((c) => chatRow(c, `#/nb/${nb.id}/chat/${c.id}`, chat?.id === c.id)).join('') || '<p class="sb-empty">Sessions you start here stay inside this notebook.</p>'}</div>
       <a class="sb-settings${route.view === 'nb-settings' ? ' active' : ''}" href="#/nb/${nb.id}/settings">⚙ Notebook settings</a>`;
@@ -522,18 +523,19 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       ['🗣️', 'Practice a language', 'Let\'s practice a language conversation. Ask me which language and my level, then start a simple conversation.']
     ];
     el.view.innerHTML = `<div class="page home">
-      <header class="page-hero"><span class="eyebrow">Your study space</span><h1>What are we <em>figuring out</em> today?</h1>
-        <p class="lead">Ask a quick question below, or open a notebook for long-term learning with a plan, lessons, and quizzes.</p></header>
+      <header class="page-hero"><div class="welcome-back"><span class="eyebrow">Your study space</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
+        <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
+      <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
       ${composer('home', 'Ask anything you\'re curious about…', { big: true })}
       <div class="starter-row">${starters.map(([icon, label, prompt]) => `<button type="button" class="starter" data-action="starter" data-prompt="${esc(prompt)}"><span>${icon}</span>${label}</button>`).join('')}</div>
       <section class="home-section">
-        <div class="section-head"><div><h2>Your notebooks</h2><p>Private study spaces for subjects you want to really master.</p></div><a class="btn btn-primary" href="#/notebooks/new">＋ New notebook</a></div>
+        <div class="section-head"><div><h2>Your notebooks</h2><p>Private study spaces with a learning plan, lessons, and quizzes.</p></div><a class="btn btn-soft" href="#/notebooks/new">＋ New notebook</a></div>
         ${notebooks.length ? `<div class="nb-grid">${notebooks.map(notebookCard).join('')}</div>` : `
         <div class="nb-intro">
-          <div class="nb-intro-copy"><h3>Turn any subject into a guided course</h3>
-            <ol><li><strong>Set a goal</strong> and tell us your level.</li><li><strong>Get a learning plan</strong> with lessons built for you.</li><li><strong>Learn lesson by lesson</strong> with a tutor that remembers your progress.</li><li><strong>Take quizzes</strong> and watch your scores climb.</li></ol>
-            <a class="btn btn-primary" href="#/notebooks/new">Create your first notebook</a></div>
-          <div class="nb-templates"><span class="eyebrow">Or start from an idea</span>${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="template" data-action="template" data-key="${key}" style="--nb:${colorHex(t.color)}"><span class="nb-icon">${t.icon}</span><span><strong>${t.name}</strong><small>${esc(t.goal)}</small></span></button>`).join('')}</div>
+          <div class="nb-step tint-lilac"><span>01</span><strong>Set a goal</strong><small>Tell us your level and how much time you have.</small></div>
+          <div class="nb-step tint-mint"><span>02</span><strong>Get a plan</strong><small>Lessons ordered from basics to mastery.</small></div>
+          <div class="nb-step tint-peach"><span>03</span><strong>Learn lessons</strong><small>A tutor that remembers your progress.</small></div>
+          <div class="nb-step tint-blue"><span>04</span><strong>Take quizzes</strong><small>Explanations for every answer.</small></div>
         </div>`}
       </section></div>`;
     $('#composer-home').focus({ preventScroll: true });
@@ -583,16 +585,16 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         <div class="tags"><span>${esc(LEVELS[nb.level])}</span><span>${esc(PACES[nb.pace])}</span>${nb.deadline ? `<span>🎯 ${esc(new Date(nb.deadline + 'T00:00').toLocaleDateString())}</span>` : ''}</div></div>
         <a class="btn btn-ghost" href="#/nb/${nb.id}/settings">Edit</a></header>
       <div class="stat-grid">
-        <div class="stat"><span>Lessons</span><strong>${p.total ? `${p.done}<small>/${p.total}</small>` : '–'}</strong><div class="progress"><i style="width:${p.pct}%"></i></div></div>
-        <div class="stat"><span>Quiz average</span><strong>${avg === null ? '–' : `${avg}<small>%</small>`}</strong><em>${plural(attempts.length, 'attempt')}</em></div>
-        <div class="stat"><span>Sessions</span><strong>${sessions.length}</strong><em>chats in this notebook</em></div>
-        <div class="stat"><span>Last studied</span><strong class="stat-text">${timeAgo(nb.lastStudiedAt)}</strong></div>
+        <div class="stat tint-lilac"><span>Lessons</span><strong>${p.total ? `${p.done}<small>/${p.total}</small>` : '–'}</strong><div class="progress"><i style="width:${p.pct}%"></i></div></div>
+        <div class="stat tint-mint"><span>Quiz average</span><strong>${avg === null ? '–' : `${avg}<small>%</small>`}</strong><em>${plural(attempts.length, 'attempt')}</em></div>
+        <div class="stat tint-peach"><span>Sessions</span><strong>${sessions.length}</strong><em>chats in this notebook</em></div>
+        <div class="stat tint-blue"><span>Last studied</span><strong class="stat-text">${timeAgo(nb.lastStudiedAt)}</strong></div>
       </div>
       ${nextLessonCard(nb)}
       <div class="action-grid">
-        <button type="button" class="action-card" data-action="quick-quiz"><span>✦</span><strong>Quiz me</strong><small>5 questions on what I've studied</small></button>
-        <button type="button" class="action-card" data-action="diagnostic"><span>◎</span><strong>Diagnostic check</strong><small>Find my real starting level</small></button>
-        <a class="action-card" href="#/nb/${nb.id}/sessions"><span>✎</span><strong>Ask my tutor</strong><small>Open a free-form session</small></a>
+        <button type="button" class="action-card tint-lilac" data-action="quick-quiz"><span>✦</span><strong>Quiz me</strong><small>5 questions on what I've studied</small></button>
+        <button type="button" class="action-card tint-mint" data-action="diagnostic"><span>◎</span><strong>Diagnostic check</strong><small>Find my real starting level</small></button>
+        <a class="action-card tint-peach" href="#/nb/${nb.id}/sessions"><span>✎</span><strong>Ask my tutor</strong><small>Open a free-form session</small></a>
       </div>
       <div class="two-col">
         <section class="card"><div class="card-head"><h3>Recent sessions</h3><a href="#/nb/${nb.id}/sessions">All</a></div>
