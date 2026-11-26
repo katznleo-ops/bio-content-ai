@@ -27,15 +27,17 @@
     { id: 'blue', hex: '#3576dd' }, { id: 'pink', hex: '#d2467f' }, { id: 'teal', hex: '#17929f' }
   ];
   const ICONS = ['📐', '🧪', '🧬', '📚', '🌍', '🏛️', '💻', '🎨', '🎵', '🗣️', '🧠', '📈'];
+  const GRADES = { elementary: 'Elementary (K–5)', middle: 'Middle school (6–8)', high: 'High school (9–12)', college: 'College / university', adult: 'Adult / self-study' };
   const LEVELS = { new: 'Just starting out', basics: 'Know the basics', intermediate: 'Intermediate', advanced: 'Advanced' };
   const PACES = { light: '15–20 min, a few times a week', steady: 'About 30 min most days', intensive: 'An hour or more a day' };
   const DIFFICULTIES = { easier: 'Easier', matched: 'Just right', challenge: 'Challenge me' };
   // The original pastel subject cards; each opens a pre-filled notebook form.
+  // The pastel subject cards. They only pick a subject area: the learner fills in the rest.
   const TEMPLATES = {
-    math: { tint: 'math', glyph: '∑', title: 'Math & numbers', caption: 'Make tricky ideas click', name: 'Math', icon: '📐', color: 'violet', goal: 'Get confident with the math I\'m studying right now, from the basics up.' },
-    science: { tint: 'science', glyph: '✳', title: 'Science & nature', caption: 'Find out how it works', name: 'Science', icon: '🧪', color: 'green', goal: 'Understand the science topics in my class well enough to explain them and ace my next test.' },
-    writing: { tint: 'writing', glyph: 'Aa', title: 'Writing & language', caption: 'Find the right words', name: 'Writing', icon: '📚', color: 'coral', goal: 'Write clear, well-structured essays with strong thesis statements and evidence.' },
-    history: { tint: 'history', glyph: '◷', title: 'History & society', caption: 'Connect past and present', name: 'History', icon: '🏛️', color: 'blue', goal: 'Understand key events, their causes, and why they still matter today.' }
+    math: { tint: 'math', glyph: '∑', title: 'Math & numbers', caption: 'Make tricky ideas click', icon: '📐', color: 'violet', placeholder: 'e.g. Algebra 1, Geometry, Calculus' },
+    science: { tint: 'science', glyph: '✳', title: 'Science & nature', caption: 'Find out how it works', icon: '🧪', color: 'green', placeholder: 'e.g. Biology, Chemistry, Physics' },
+    writing: { tint: 'writing', glyph: 'Aa', title: 'Writing & language', caption: 'Find the right words', icon: '📚', color: 'coral', placeholder: 'e.g. Essay writing, English, Spanish' },
+    history: { tint: 'history', glyph: '◷', title: 'History & society', caption: 'Connect past and present', icon: '🏛️', color: 'blue', placeholder: 'e.g. World history, US government' }
   };
 
   // ---------- Small helpers ----------
@@ -70,7 +72,7 @@
   function newNotebook(fields) {
     return {
       id: uid(), name: fields.name || 'Notebook', icon: fields.icon || ICONS[0], color: fields.color || COLORS[0].id,
-      goal: fields.goal || '', level: fields.level || 'new', pace: fields.pace || 'steady', deadline: fields.deadline || '',
+      goal: fields.goal || '', grade: fields.grade || '', struggles: fields.struggles || '', level: fields.level || 'new', pace: fields.pace || 'steady', deadline: fields.deadline || '',
       createdAt: Date.now(), updatedAt: Date.now(), lastStudiedAt: 0, plan: null, quizzes: []
     };
   }
@@ -102,6 +104,12 @@
   }
 
   const findNb = (id) => notebooks.find((n) => n.id === id);
+  const gradeLabel = (nb) => GRADES[nb.grade] || (nb.level ? LEVELS[nb.level] : '') || '';
+  const diagnosticOf = (nb) => nb.quizzes.find((q) => q.kind === 'diagnostic');
+  function diagnosticSummary(nb) {
+    const q = diagnosticOf(nb); const a = q?.attempts[q.attempts.length - 1];
+    return a ? { quiz: q, attempt: a, missed: q.questions.filter((x, i) => a.answers[i] !== x.answer) } : null;
+  }
   const nbChats = (nb) => chats.filter((c) => c.notebookId === nb.id);
   const generalChats = () => chats.filter((c) => !c.notebookId);
   function nbProgress(nb) {
@@ -338,9 +346,25 @@
       <div id="messages" class="messages" role="log" aria-live="polite">${empty ? `<div class="chat-empty"><h2>${nb ? `${esc(nb.icon)} New ${esc(nb.name)} session` : 'New chat'}</h2><p>Ask anything to get started.</p></div>` : ''}</div>
       <div class="chat-compose-area">${composer('chat', nb ? `Ask your ${nb.name} tutor…` : 'Ask a follow-up…')}</div></div>`;
     chat.messages.forEach(appendMessage);
-    if (streaming && streaming.chatId === chat.id) paintLive();
     const box = $('#messages'); box.scrollTop = box.scrollHeight;
+    if (streaming && streaming.chatId === chat.id) { paintLive(); pinQuestion(); }
     $('#composer-chat').focus({ preventScroll: true });
+  }
+  // When a question is sent, scroll it to the top of the chat so the answer starts right below it.
+  // A spacer at the end of the list makes room to scroll that far even while the answer is short.
+  function updateSpacer() {
+    const box = $('#messages'); if (!box?.dataset.pin) return;
+    const questions = box.querySelectorAll('.message-row.user'); const q = questions[questions.length - 1]; if (!q) return;
+    let spacer = box.querySelector('.scroll-spacer');
+    if (!spacer) { spacer = document.createElement('div'); spacer.className = 'scroll-spacer'; spacer.setAttribute('aria-hidden', 'true'); }
+    box.append(spacer); spacer.style.height = '0px';
+    spacer.style.height = `${Math.max(0, box.clientHeight - (spacer.offsetTop - q.offsetTop) - 16)}px`;
+  }
+  function pinQuestion() {
+    const box = $('#messages'); if (!box) return;
+    const questions = box.querySelectorAll('.message-row.user'); const q = questions[questions.length - 1]; if (!q) return;
+    box.dataset.pin = '1'; updateSpacer();
+    box.scrollTo({ top: Math.max(0, q.offsetTop - 16), behavior: 'smooth' });
   }
   function paintLive() {
     frame = 0;
@@ -349,12 +373,12 @@
     let row = box.querySelector('.live-row');
     if (!row) {
       box.querySelector('.chat-empty')?.remove();
+      box.querySelector('.scroll-spacer')?.remove();
       box.insertAdjacentHTML('beforeend', '<article class="message-row assistant live-row"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
       row = box.lastElementChild;
     }
-    const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
     row.querySelector('.message-bubble').innerHTML = streaming.text ? md(streaming.text) : '<span class="typing-indicator"><i></i><i></i><i></i></span>';
-    if (stick) box.scrollTop = box.scrollHeight;
+    updateSpacer();
   }
 
   async function sendMessage(chat, text, attachments = []) {
@@ -369,7 +393,7 @@
     if (route.view === 'chat' && route.chatId === chat.id) { $('#messages .chat-empty')?.remove(); appendMessage(userMessage); renderCrumbs(nb, chat, null); }
     renderSidebar(nb, chat);
     busy = true; document.querySelectorAll('.send-button').forEach((b) => { b.disabled = true; });
-    streaming = { chatId: chat.id, text: '' }; paintLive();
+    streaming = { chatId: chat.id, text: '' }; paintLive(); pinQuestion();
     let answer = null;
     try {
       const history = chat.messages.slice(-30).map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', text: m.text, attachments: (m.attachments || []).map((f) => ({ name: f.name, type: f.type, data: f.data, size: f.size })) }));
@@ -395,8 +419,7 @@
       streaming = null; busy = false;
       chat.updatedAt = Date.now(); save();
       if (route.view === 'chat' && route.chatId === chat.id) {
-        $('#messages .live-row')?.remove(); appendMessage(answer);
-        const box = $('#messages'); if (box) box.scrollTop = box.scrollHeight;
+        $('#messages .live-row')?.remove(); $('#messages .scroll-spacer')?.remove(); appendMessage(answer); updateSpacer();
       }
       document.querySelectorAll('.send-button').forEach((b) => { b.disabled = false; });
     }
@@ -406,7 +429,9 @@
   function notebookContext(nb, chat = null) {
     const lines = [`This conversation happens inside the learner's private notebook "${nb.name}", a long-term study space. Act as their ongoing personal tutor for this subject: build on what they have already covered, connect new ideas to their plan, and keep them moving toward their goal.`];
     if (nb.goal) lines.push(`Learner's goal: ${nb.goal}`);
-    lines.push(`Current level: ${LEVELS[nb.level] || nb.level}. Study pace: ${PACES[nb.pace] || nb.pace}.`);
+    if (gradeLabel(nb)) lines.push(`Grade / level: ${gradeLabel(nb)}.`);
+    if (nb.struggles) lines.push(`What they are struggling with: ${nb.struggles}`);
+    lines.push(`Study pace: ${PACES[nb.pace] || nb.pace}.`);
     if (nb.deadline) lines.push(`Target date: ${nb.deadline}.`);
     if (nb.plan) {
       lines.push(`Learning plan "${nb.plan.title}":`);
@@ -439,14 +464,17 @@
   const str = (v, max = 600) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
   function planPrompt(nb) {
+    const d = diagnosticSummary(nb);
     return `Create a personalised learning plan for my notebook "${nb.name}".
+Grade / level: ${gradeLabel(nb) || 'Not specified'}
+What I'm struggling with: ${nb.struggles || 'Not specified'}
 Goal: ${nb.goal || `Build a solid understanding of ${nb.name}.`}
-Current level: ${LEVELS[nb.level]}
 Time I can study: ${PACES[nb.pace]}${nb.deadline ? `\nI'm working toward: ${nb.deadline}` : ''}
+${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Questions I missed:\n${d.missed.map((q) => `- ${q.question.replace(/\s+/g, ' ').slice(0, 160)}`).join('\n') || '- none'}` : 'No diagnostic taken yet.'}
 
 Return JSON with exactly this shape:
 {"title": string, "overview": string (2-3 sentences explaining the approach), "lessons": [{"title": string, "summary": string (1-2 sentences), "objectives": [3-4 short strings], "minutes": number (estimated study time)}]}
-Use 6 to 10 lessons ordered from foundations to mastery, sized for my level and pace. Make lesson titles short and specific.`;
+Use 6 to 10 lessons. Start at the right point for my grade${d ? ' and diagnostic results (skip or shorten what I clearly already know)' : ''}, spend extra time on what I'm struggling with, and order lessons from foundations to mastery. Make lesson titles short and specific.`;
   }
   function normalizePlan(data) {
     const lessons = (Array.isArray(data?.lessons) ? data.lessons : []).map((l) => ({
@@ -475,7 +503,7 @@ Use 6 to 10 lessons ordered from foundations to mastery, sized for my level and 
   function quizPrompt(nb, { lessonId, count, difficulty, kind }) {
     const lesson = nb.plan?.lessons.find((l) => l.id === lessonId);
     const scope = kind === 'diagnostic'
-      ? `a diagnostic quiz for "${nb.name}" that ranges from easy to hard across the whole goal, so we can find my real starting level`
+      ? `a diagnostic quiz for "${nb.name}" at the ${gradeLabel(nb) || 'appropriate'} level that ranges from easy to hard, so we can find my real starting point${nb.struggles ? `. Include several questions on what I say I struggle with: ${nb.struggles}` : ''}`
       : lesson ? `a quiz on the lesson "${lesson.title}" (${lesson.summary} Objectives: ${lesson.objectives.join('; ')})`
       : `a review quiz covering my notebook "${nb.name}"${nb.plan ? ', focusing on completed lessons and the next lesson' : ''}`;
     return `Create ${scope}.
@@ -524,7 +552,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     ];
     el.view.innerHTML = `<div class="page home">
       <header class="page-hero"><div class="welcome-back"><span class="eyebrow">Your study space</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
-        <p class="lead">Choose a notebook or ask your own question.</p></header>
+        <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
       <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
       ${composer('home', 'Ask anything you\'re curious about…', { big: true })}
       <div class="starter-row">${starters.map(([icon, label, prompt]) => `<button type="button" class="starter" data-action="starter" data-prompt="${esc(prompt)}"><span>${icon}</span>${label}</button>`).join('')}</div>
@@ -545,33 +573,75 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     const t = nb || draftTemplate || {};
     draftTemplate = null;
     const isNew = !nb;
-    const v = { name: t.name || '', icon: t.icon || ICONS[0], color: t.color || COLORS[0].id, goal: t.goal || '', level: t.level || 'new', pace: t.pace || 'steady', deadline: t.deadline || '' };
+    const v = { name: nb?.name || '', icon: t.icon || ICONS[0], color: t.color || COLORS[0].id, grade: nb?.grade || '', struggles: nb?.struggles || '', goal: nb?.goal || '', pace: nb?.pace || 'steady', deadline: nb?.deadline || '' };
     const radios = (name, options, current) => Object.entries(options).map(([value, label]) => `<label class="pill"><input type="radio" name="${name}" value="${value}"${value === current ? ' checked' : ''}><span>${label}</span></label>`).join('');
-    el.view.innerHTML = `<div class="page narrow">
-      <header class="page-hero"><span class="eyebrow">${isNew ? 'New notebook' : 'Notebook settings'}</span><h1>${isNew ? 'Create a <em>study space</em>' : `Edit <em>${esc(nb.name)}</em>`}</h1>
-        <p class="lead">${isNew ? 'A notebook is a private study space. Its chats stay inside it, and your tutor uses your goal, plan, and quiz results to guide you over time.' : 'Changes to your goal, level, or pace are used in every future session. Regenerate the plan to apply them to your lessons.'}</p></header>
-      <form class="card form" data-form="notebook">
-        <div class="field"><label for="nbName">Subject or notebook name</label><input id="nbName" name="name" maxlength="60" required placeholder="e.g. Calculus, Cell biology, Spanish" value="${esc(v.name)}"></div>
+    const fWhat = `
+        <fieldset class="field"><legend>What grade or level are you at?</legend><div class="pills">${radios('grade', GRADES, v.grade)}</div></fieldset>
+        <div class="field"><label for="nbName">What subject or course is it?</label><input id="nbName" name="name" maxlength="60" placeholder="${esc(t.placeholder || 'e.g. Algebra 1, AP Biology, Spanish 2')}" value="${esc(v.name)}"></div>
         <div class="field-row">
           <fieldset class="field"><legend>Icon</legend><div class="icon-picker">${ICONS.map((i) => `<label><input type="radio" name="icon" value="${i}"${i === v.icon ? ' checked' : ''}><span>${i}</span></label>`).join('')}</div></fieldset>
           <fieldset class="field"><legend>Color</legend><div class="color-picker">${COLORS.map((c) => `<label title="${c.id}"><input type="radio" name="color" value="${c.id}"${c.id === v.color ? ' checked' : ''}><span style="--c:${c.hex}"></span></label>`).join('')}</div></fieldset>
-        </div>
-        <div class="field"><label for="nbGoal">What do you want to achieve?</label><textarea id="nbGoal" name="goal" rows="3" maxlength="600" placeholder="e.g. Understand derivatives and integrals well enough to pass my calculus exam in March.">${esc(v.goal)}</textarea></div>
-        <fieldset class="field"><legend>Where are you starting from?</legend><div class="pills">${radios('level', LEVELS, v.level)}</div></fieldset>
+        </div>`;
+    const fStuck = `
+        <div class="field"><label for="nbStruggles">What part are you struggling with?</label><textarea id="nbStruggles" name="struggles" rows="3" maxlength="600" placeholder="e.g. Word problems, and I always mix up when to use the quadratic formula.">${esc(v.struggles)}</textarea></div>
+        <div class="field"><label for="nbGoal">What do you want to be able to do? <small>(optional)</small></label><textarea id="nbGoal" name="goal" rows="2" maxlength="600" placeholder="e.g. Pass my unit test, or feel confident doing homework on my own.">${esc(v.goal)}</textarea></div>
         <fieldset class="field"><legend>How much time can you study?</legend><div class="pills">${radios('pace', PACES, v.pace)}</div></fieldset>
-        <div class="field"><label for="nbDeadline">Working toward a test or date? <small>(optional)</small></label><input id="nbDeadline" name="deadline" type="date" value="${esc(v.deadline)}"></div>
-        ${isNew ? '<label class="check"><input type="checkbox" name="generate" checked><span>Build my learning plan right away</span></label>' : ''}
-        <div class="form-actions">${isNew ? '<a class="btn btn-ghost" href="#/">Cancel</a>' : `<button type="button" class="btn btn-danger-ghost" data-action="delete-notebook">Delete notebook</button>`}
-          <button class="btn btn-primary btn-lg" type="submit">${isNew ? 'Create notebook' : 'Save changes'}</button></div>
+        <div class="field"><label for="nbDeadline">Working toward a test or date? <small>(optional)</small></label><input id="nbDeadline" name="deadline" type="date" value="${esc(v.deadline)}"></div>`;
+    if (!isNew) {
+      el.view.innerHTML = `<div class="page narrow">
+        <header class="page-hero"><span class="eyebrow">Notebook settings</span><h1>Edit <em>${esc(nb.name)}</em></h1>
+          <p class="lead">Your tutor uses these details in every session. Regenerate the plan to apply changes to your lessons.</p></header>
+        <form class="card form" data-form="notebook">${fWhat}${fStuck}
+          <div class="form-actions"><button type="button" class="btn btn-danger-ghost" data-action="delete-notebook">Delete notebook</button><button class="btn btn-primary btn-lg" type="submit" value="save">Save changes</button></div>
+        </form></div>`;
+      return;
+    }
+    el.view.innerHTML = `<div class="page narrow">
+      <header class="page-hero"><span class="eyebrow">New notebook</span><h1>Let's set up your <em>study space</em></h1>
+        <p class="lead">A few quick questions so your tutor can meet you where you are.</p></header>
+      <form class="card form wizard" data-form="notebook" data-step="1" novalidate>
+        <ol class="wizard-steps" aria-hidden="true"><li class="on">Your subject</li><li>Where you're stuck</li><li>Starting point</li></ol>
+        <section class="wizard-step" data-step="1"><h3>What are you studying?</h3>${fWhat}
+          <div class="form-actions"><a class="btn btn-ghost" href="#/">Cancel</a><button type="button" class="btn btn-primary btn-lg" data-action="wiz-next">Next →</button></div></section>
+        <section class="wizard-step" data-step="2" hidden><h3>Where are you getting stuck?</h3>${fStuck}
+          <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="wiz-back">← Back</button><button type="button" class="btn btn-primary btn-lg" data-action="wiz-next">Next →</button></div></section>
+        <section class="wizard-step" data-step="3" hidden><h3>Let's find your starting point</h3>
+          <div class="recommend"><span class="recommend-badge">Recommended</span><strong>Take a quick diagnostic first</strong>
+            <p>8 questions, from easy to harder, including the parts you said are tricky. Your results tell your tutor what you already know, so your learning plan starts in the right place instead of guessing.</p>
+            <button class="btn btn-primary btn-lg" type="submit" value="diagnostic">✦ Start the diagnostic</button></div>
+          <div class="form-actions spread"><button type="button" class="btn btn-ghost" data-action="wiz-back">← Back</button>
+            <span class="alt-actions"><button class="btn btn-soft" type="submit" value="plan">Skip, build my plan now</button><button class="btn btn-ghost" type="submit" value="none">Just create the notebook</button></span></div></section>
       </form></div>`;
-    $('#nbName').focus({ preventScroll: true });
+    $('input[name="grade"]')?.focus({ preventScroll: true });
+  }
+  function wizardStep(form, step) {
+    form.dataset.step = step;
+    form.querySelectorAll('.wizard-step').forEach((sec) => { sec.hidden = sec.dataset.step !== String(step); });
+    form.querySelectorAll('.wizard-steps li').forEach((li, i) => li.classList.toggle('on', i < step));
+    el.view.scrollTop = 0;
+  }
+  function validateStep(form, step) {
+    if (step === 1) {
+      if (!form.querySelector('input[name="grade"]:checked')) { toast('Pick your grade or level.'); form.querySelector('input[name="grade"]').focus(); return false; }
+      if (!form.querySelector('#nbName').value.trim()) { toast('Tell us the subject or course.'); form.querySelector('#nbName').focus(); return false; }
+    }
+    if (step === 2 && !form.querySelector('#nbStruggles').value.trim()) { toast('Tell us what part you’re struggling with. Even a few words helps.'); form.querySelector('#nbStruggles').focus(); return false; }
+    return true;
   }
 
   // ---------- Views: notebook ----------
   function nextLessonCard(nb) {
     const key = `plan:${nb.id}`;
     if (jobs[key]) return `<div class="card next-up loading"><div class="spinner"></div><div><h3>Building your learning plan…</h3><p>Your tutor is designing lessons around your goal and level. This usually takes 10–30 seconds.</p></div></div>`;
-    if (!nb.plan) return `<div class="card next-up empty"><div><span class="eyebrow">Get started</span><h3>Create your learning plan</h3><p>Get a step-by-step path of lessons built around your goal, level, and schedule.</p>${jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : ''}</div><button type="button" class="btn btn-primary btn-lg" data-action="generate-plan">✦ Generate my plan</button></div>`;
+    if (!nb.plan) {
+      const err = jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : '';
+      const diag = diagnosticOf(nb), done = diagnosticSummary(nb);
+      if (jobs[`quiz:${nb.id}`]) return `<div class="card next-up loading"><div class="spinner"></div><div><h3>Writing your diagnostic…</h3><p>This usually takes 10–20 seconds.</p></div></div>`;
+      if (done) return `<div class="card next-up"><div><span class="eyebrow">Diagnostic done · ${done.attempt.score}/${done.attempt.total}</span><h3>Build your learning plan</h3><p>Your plan will start where your diagnostic says you are and focus on what you're struggling with.</p>${err}</div><button type="button" class="btn btn-primary btn-lg" data-action="generate-plan">✦ Build my plan</button></div>`;
+      if (diag) return `<div class="card next-up"><div><span class="eyebrow">Step 1</span><h3>Finish your diagnostic</h3><p>You're partway through. Finish it so your plan starts in the right place.</p></div><a class="btn btn-primary btn-lg" href="#/nb/${nb.id}/quiz/${diag.id}">Continue diagnostic →</a></div>`;
+      return `<div class="card next-up"><div><span class="eyebrow">Recommended first step</span><h3>Take a quick diagnostic</h3><p>8 questions to find what you already know, so your learning plan starts in the right place.</p>${err}</div>
+        <div class="next-up-actions"><button type="button" class="btn btn-primary btn-lg" data-action="diagnostic">✦ Start diagnostic</button><button type="button" class="btn btn-ghost" data-action="generate-plan">Skip, build my plan</button></div></div>`;
+    }
     const i = nb.plan.lessons.findIndex((l) => !l.done);
     if (i < 0) return `<div class="card next-up done"><div><span class="eyebrow">Plan complete 🎉</span><h3>You finished every lesson!</h3><p>Lock it in with a final review quiz, or extend your plan with a new goal.</p></div><button type="button" class="btn btn-primary btn-lg" data-action="quick-quiz" data-count="10">Take a final review</button></div>`;
     const l = nb.plan.lessons[i], existing = chats.find((c) => c.lessonId === l.id);
@@ -582,7 +652,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     const p = nbProgress(nb), { attempts, avg } = quizStats(nb), sessions = nbChats(nb);
     el.view.innerHTML = `<div class="page">
       <header class="nb-hero"><span class="nb-icon xl">${esc(nb.icon)}</span><div class="nb-hero-copy"><span class="eyebrow">Notebook</span><h1>${esc(nb.name)}</h1>${nb.goal ? `<p class="lead">${esc(nb.goal)}</p>` : ''}
-        <div class="tags"><span>${esc(LEVELS[nb.level])}</span><span>${esc(PACES[nb.pace])}</span>${nb.deadline ? `<span>🎯 ${esc(new Date(nb.deadline + 'T00:00').toLocaleDateString())}</span>` : ''}</div></div>
+        ${nb.struggles ? `<p class="struggles"><strong>Working on:</strong> ${esc(nb.struggles)}</p>` : ''}<div class="tags">${gradeLabel(nb) ? `<span>${esc(gradeLabel(nb))}</span>` : ''}<span>${esc(PACES[nb.pace])}</span>${nb.deadline ? `<span>🎯 ${esc(new Date(nb.deadline + 'T00:00').toLocaleDateString())}</span>` : ''}</div></div>
         <a class="btn btn-ghost" href="#/nb/${nb.id}/settings">Edit</a></header>
       <div class="stat-grid">
         <div class="stat tint-lilac"><span>Lessons</span><strong>${p.total ? `${p.done}<small>/${p.total}</small>` : '–'}</strong><div class="progress"><i style="width:${p.pct}%"></i></div></div>
@@ -691,8 +761,8 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     el.view.innerHTML = `<div class="page narrow quiz-page">
       <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">${plural(quiz.attempts.length, 'attempt')}</span></div>
       <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score">${a.score}<small>/${a.total}</small></div>
-        <p class="lead">${ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
-        <div class="form-actions center">${missed.length ? '<button type="button" class="btn btn-primary btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>' : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
+        <p class="lead">${quiz.kind === 'diagnostic' ? (nb.plan ? 'Your tutor will use these results in your sessions.' : 'Nice work. Now let’s turn these results into a plan made for you.') : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
+        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
       <h2 class="section-title">Review</h2>
       <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div></div>
         ${ok ? '' : `<p><span class="label">Your answer</span> ${mdInline(q.choices[a.answers[i]] ?? '–')}</p>`}<p><span class="label">Correct answer</span> ${mdInline(q.choices[q.answer])}</p>${q.explanation ? `<div class="md muted-md">${md(q.explanation)}</div>` : ''}</li>`; }).join('')}</ol></div>`;
@@ -740,6 +810,9 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         notebooks = notebooks.filter((n) => n.id !== nb.id); chats = chats.filter((c) => c.notebookId !== nb.id); save(); go('#/', { replace: true }); toast('Notebook deleted.');
       } });
     },
+    'wiz-next': (t) => { const form = t.closest('form'); const step = Number(form.dataset.step); if (validateStep(form, step)) wizardStep(form, step + 1); },
+    'wiz-back': (t) => { const form = t.closest('form'); wizardStep(form, Number(form.dataset.step) - 1); },
+    'plan-from-diagnostic': () => { const nb = currentNb(); if (!nb) return; go(`#/nb/${nb.id}/plan`); generatePlan(nb); },
     'generate-plan': () => { const nb = currentNb(); if (nb) generatePlan(nb); },
     'regenerate-plan': () => {
       const nb = currentNb(); if (!nb) return;
@@ -814,12 +887,19 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     if (form.dataset.form === 'notebook') {
       e.preventDefault();
       const f = new FormData(form);
-      const fields = { name: String(f.get('name') || '').trim(), icon: f.get('icon'), color: f.get('color'), goal: String(f.get('goal') || '').trim(), level: f.get('level'), pace: f.get('pace'), deadline: f.get('deadline') || '' };
-      if (!fields.name) return form.querySelector('#nbName').focus();
+      const fields = { name: String(f.get('name') || '').trim(), icon: f.get('icon'), color: f.get('color'), grade: String(f.get('grade') || ''), struggles: String(f.get('struggles') || '').trim(), goal: String(f.get('goal') || '').trim(), pace: f.get('pace') || 'steady', deadline: f.get('deadline') || '' };
       const existing = currentNb();
-      if (existing) { Object.assign(existing, fields, { updatedAt: Date.now() }); save(); toast('Notebook saved.'); go(`#/nb/${existing.id}`); return; }
+      if (existing) {
+        if (!fields.name) return form.querySelector('#nbName').focus();
+        Object.assign(existing, fields, { updatedAt: Date.now() }); save(); toast('Notebook saved.'); go(`#/nb/${existing.id}`); return;
+      }
+      if (!validateStep(form, 1)) return wizardStep(form, 1);
+      if (!validateStep(form, 2)) return wizardStep(form, 2);
       const nb = newNotebook(fields); notebooks.unshift(nb); save();
-      if (f.get('generate')) { go(`#/nb/${nb.id}/plan`); generatePlan(nb); } else go(`#/nb/${nb.id}`);
+      const choice = e.submitter?.value || 'diagnostic';
+      if (choice === 'diagnostic') { history.replaceState(null, '', `#/nb/${nb.id}`); generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'diagnostic' }); }
+      else if (choice === 'plan') { go(`#/nb/${nb.id}/plan`); generatePlan(nb); }
+      else go(`#/nb/${nb.id}`);
       return;
     }
     if (form.dataset.form === 'quiz') {
@@ -828,6 +908,11 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       const f = new FormData(form), scope = String(f.get('scope') || '');
       generateQuiz(nb, { kind: scope === 'diagnostic' ? 'diagnostic' : 'quiz', lessonId: scope === 'diagnostic' ? '' : scope, count: Number(f.get('count')) || 8, difficulty: String(f.get('difficulty') || 'matched') });
     }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const form = e.target.closest?.('form.wizard');
+    if (form && e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); form.querySelector(`.wizard-step[data-step="${form.dataset.step}"] [data-action="wiz-next"]`)?.click(); }
   });
 
   // Paste images straight into a composer.
@@ -853,6 +938,11 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   if (!Array.isArray(chats)) chats = [];
   if (!Array.isArray(notebooks)) notebooks = [];
   for (const nb of notebooks) { nb.quizzes ||= []; }
+  // The previous version created these notebooks automatically when a subject card was clicked.
+  // Drop them if they were never used (no goal, plan, quizzes, or sessions), since notebooks now start empty.
+  const AUTO_CREATED = ['Math & Numbers', 'Science & Nature', 'Writing & Language', 'History & Society'];
+  const unused = (nb) => AUTO_CREATED.includes(nb.name) && !nb.goal && !nb.struggles && !nb.plan && !nb.quizzes.length && !chats.some((c) => c.notebookId === nb.id);
+  if (notebooks.some(unused)) { notebooks = notebooks.filter((nb) => !unused(nb)); save(); }
   applyFont(load(KEYS.font, null) || localStorage.getItem(KEYS.font) || 'rounded');
   render(true);
 })();
