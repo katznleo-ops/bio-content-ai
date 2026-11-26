@@ -414,16 +414,17 @@ body[data-mode="notebook"] .workspace{background:radial-gradient(ellipse 80% 55%
 /* ---------- Pastels from the original design ---------- */
 .tint-lilac{background:#f4f0ff!important}.tint-mint{background:#edf7f0!important}.tint-peach{background:#fff3ec!important}.tint-blue{background:#f0f3fb!important}
 .tint-lilac>span:first-child{color:#6658bd}.tint-mint>span:first-child{color:#559772}.tint-peach>span:first-child{color:#cb7958}.tint-blue>span:first-child{color:#637bad}
+.home .page-hero h1{font-size:clamp(42px,5.2vw,62px);letter-spacing:-2.4px;line-height:1.05}
 .welcome-back{display:flex;align-items:center;gap:9px}.welcome-back>span:last-child{color:#8876de;font-size:15px}
 .topic-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
-.topic-card{display:flex;flex-direction:column;align-items:flex-start;min-height:150px;padding:17px 15px 15px;border:1px solid #eeedf2;border-radius:15px;text-align:left;cursor:pointer;transition:transform .16s,box-shadow .16s,border-color .16s}
+.topic-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;min-height:112px;padding:15px 15px 13px;border:1px solid #eeedf2;border-radius:15px;text-align:left;cursor:pointer;transition:transform .16s,box-shadow .16s,border-color .16s}
 .topic-card:hover{transform:translateY(-3px);box-shadow:0 9px 20px #39335e0d;border-color:#d9d3f0}
 .topic-math{background:#f4f0ff}.topic-science{background:#edf7f0}.topic-writing{background:#fff3ec}.topic-history{background:#f0f3fb}
-.topic-emoji{display:grid;place-items:center;width:32px;height:32px;margin-bottom:14px;border-radius:9px;background:#ffffffa6;color:#6658bd;font-size:17px;font-weight:700}
+.topic-emoji{display:grid;place-items:center;width:32px;height:32px;margin-bottom:11px;border-radius:9px;background:#ffffffa6;color:#6658bd;font-size:17px;font-weight:700}
 .topic-science .topic-emoji,.topic-science .topic-cta{color:#559772}.topic-writing .topic-emoji,.topic-writing .topic-cta{color:#cb7958}.topic-history .topic-emoji,.topic-history .topic-cta{color:#637bad}
 .topic-title{display:block;font-size:15px;font-weight:700}
 .topic-caption{display:block;margin-top:4px;color:#8b8992;font-size:13px;line-height:1.4}
-.topic-cta{margin-top:auto;padding-top:12px;font-size:12.5px;font-weight:700;color:#6658bd;opacity:0;transform:translateY(3px);transition:opacity .16s,transform .16s}
+.topic-cta{position:absolute;right:14px;top:16px;font-size:12.5px;font-weight:700;color:#6658bd;opacity:0;transform:translateY(3px);transition:opacity .16s,transform .16s}
 .topic-card:hover .topic-cta,.topic-card:focus-visible .topic-cta{opacity:1;transform:none}
 .nb-intro{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
 .nb-step{display:flex;flex-direction:column;gap:4px;padding:18px;border-radius:15px;border:1px solid #eeedf2}

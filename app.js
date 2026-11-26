@@ -524,7 +524,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     ];
     el.view.innerHTML = `<div class="page home">
       <header class="page-hero"><div class="welcome-back"><span class="eyebrow">Your study space</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
-        <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
+        <p class="lead">Choose a notebook or ask your own question.</p></header>
       <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
       ${composer('home', 'Ask anything you\'re curious about…', { big: true })}
       <div class="starter-row">${starters.map(([icon, label, prompt]) => `<button type="button" class="starter" data-action="starter" data-prompt="${esc(prompt)}"><span>${icon}</span>${label}</button>`).join('')}</div>
