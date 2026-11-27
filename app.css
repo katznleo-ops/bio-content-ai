@@ -951,3 +951,20 @@ body[data-auth="out"] .app-shell{display:none}
 .streak-banner .streak-copy{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .streak-banner .streak-copy strong{font-size:15px}
 .home-coach.nb-coach{margin:0 0 18px}
+/* Recovery codes + account page */
+.recovery-code{margin:4px 0 12px;padding:16px;border-radius:14px;background:var(--accent-softer,#f6f4ff);border:1.5px dashed color-mix(in srgb,var(--accent) 45%,#fff);font:700 24px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;text-align:center;color:var(--ink);user-select:all}
+.recovery-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:18px}
+.auth-check{display:flex;align-items:center;gap:10px;margin:4px 0 14px;font-weight:600;font-size:14.5px;color:var(--ink-2);cursor:pointer}
+.auth-check input{width:18px;height:18px;accent-color:var(--accent)}
+.auth-wide{width:100%;justify-content:center}
+.account-link{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-decoration:none;color:inherit;border-radius:10px}
+.account-link:hover strong{color:var(--accent-ink)}
+.account-page{max-width:640px}
+.account-page .auth-who h1{font-size:clamp(30px,4vw,40px)}
+.account-card{margin-top:18px;padding:22px 24px;border-radius:18px;background:#fff;border:1px solid var(--line)}
+.account-card h2{margin:0 0 8px;font:800 19px var(--display)}
+.account-card .auth-form{max-width:380px}
+.account-card .auth-form .btn{width:auto;justify-self:start}
+.muted-copy{margin:0 0 12px;color:var(--muted);font-size:14.5px}
+.account-card .recovery-actions{justify-content:flex-start}
+.btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}

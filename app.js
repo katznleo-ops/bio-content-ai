@@ -119,13 +119,15 @@
   function saveProfiles(list) { try { localStorage.setItem(PROFILES_KEY, JSON.stringify(list.slice(0, 8))); } catch {} }
   const savedProfiles = () => { const p = load(PROFILES_KEY, []); return Array.isArray(p) ? p.filter((x) => x && x.id) : []; };
   function signIn(profile) {
-    const { pw, ...rest } = profile;
+    const { pw, rec, ...rest } = profile;
     const acct = { ...rest, signedInAt: Date.now() };
-    const keepPw = pw || savedProfiles().find((p) => p.id === acct.id)?.pw || null;
+    const prev = savedProfiles().find((p) => p.id === acct.id) || {};
+    const keepPw = pw || prev.pw || null, keepRec = rec || prev.rec || null;
     try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(acct)); } catch { toast('This browser is blocking storage, so EduCator cannot remember you.'); return; }
-    saveProfiles([{ id: acct.id, provider: acct.provider, name: acct.name, firstName: acct.firstName || '', email: acct.email || '', picture: acct.picture || '', grade: acct.grade || '', ...(keepPw ? { pw: keepPw } : {}) }, ...savedProfiles().filter((p) => p.id !== acct.id)]);
+    saveProfiles([{ id: acct.id, provider: acct.provider, name: acct.name, firstName: acct.firstName || '', email: acct.email || '', picture: acct.picture || '', grade: acct.grade || '', ...(keepPw ? { pw: keepPw } : {}), ...(keepRec ? { rec: keepRec } : {}) }, ...savedProfiles().filter((p) => p.id !== acct.id)]);
     location.reload();
   }
+  function updateProfile(id, patch) { saveProfiles(savedProfiles().map((p) => (p.id === id ? { ...p, ...patch } : p))); }
   // Profile passwords are never stored: only a salted PBKDF2 hash (150,000 rounds of SHA-256).
   const bytesToB64 = (bytes) => btoa(String.fromCharCode(...bytes));
   const unb64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
@@ -142,6 +144,24 @@
     return diff === 0;
   }
   const MIN_PASSWORD = 6;
+  // Recovery codes reset a forgotten password (there is no email for name-only profiles).
+  // Like passwords, only a salted hash is kept, and each code works once.
+  const RC_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const newRecoveryCode = () => [...crypto.getRandomValues(new Uint8Array(12))].map((x) => RC_ALPHABET[x % 32]).join('').match(/.{4}/g).join('-');
+  const normCode = (code) => String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const hashRecovery = (code) => hashPassword(normCode(code));
+  const checkRecovery = (code, rec) => checkPassword(normCode(code), rec);
+  function recoveryCardHtml(code, name) {
+    return `<div class="recovery-code" aria-label="Recovery code">${esc(code)}</div>
+      <div class="recovery-actions"><button type="button" class="btn btn-soft btn-sm" data-rc="copy">Copy</button><button type="button" class="btn btn-soft btn-sm" data-rc="download">Download as a file</button></div>`;
+  }
+  function wireRecoveryButtons(root, code, name) {
+    root.querySelector('[data-rc="copy"]')?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(code); toast('Recovery code copied.'); } catch { toast('Could not copy. Write the code down instead.'); } });
+    root.querySelector('[data-rc="download"]')?.addEventListener('click', () => {
+      const text = `EduCator recovery code for ${name}\n\n${code}\n\nUse it on the sign-in screen (Forgot password?) to set a new password. Each code works once.\n`;
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = `educator-recovery-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'code'}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+  }
   function signOut() {
     try { localStorage.removeItem(ACCOUNT_KEY); } catch {}
     try { window.google?.accounts?.id?.disableAutoSelect(); } catch {}
@@ -311,6 +331,7 @@
     if (!p.length) return { view: 'home' };
     if (p[0] === 'chat' && p[1]) return { view: 'chat', chatId: p[1] };
     if (p[0] === 'notebooks' && p[1] === 'new') return { view: 'new-notebook' };
+    if (p[0] === 'account') return { view: 'account' };
     if (p[0] === 'nb' && p[1]) {
       const base = { nbId: p[1] };
       if (p[2] === 'chat' && p[3]) return { ...base, view: 'chat', chatId: p[3] };
@@ -358,7 +379,7 @@
     document.body.style.setProperty('--accent', nb ? colorHex(nb.color) : COLORS[0].hex);
     renderSidebar(nb, chat);
     const views = {
-      home: viewHome, 'new-notebook': () => viewNotebookForm(null), chat: () => viewChat(chat, nb),
+      home: viewHome, account: viewAccount, 'new-notebook': () => viewNotebookForm(null), chat: () => viewChat(chat, nb),
       'nb-overview': () => viewOverview(nb), 'nb-plan': () => viewPlan(nb), 'nb-quizzes': () => viewQuizzes(nb),
       'nb-sessions': () => viewSessions(nb), 'nb-settings': () => viewNotebookForm(nb), quiz: () => viewQuiz(nb, quiz),
       'nb-review': () => viewReview(nb), 'nb-materials': () => viewMaterials(nb), 'nb-report': () => viewReport(nb), cards: () => viewCards(nb, deck)
@@ -413,6 +434,7 @@
       if (quiz) parts.push(`<a href="#/nb/${nb.id}/quizzes">Quizzes</a>`, `<span>${esc(quiz.title)}</span>`);
     } else if (chat) parts.push(`<span>${esc(chat.title)}</span>`);
     else if (route.view === 'new-notebook') parts.push('<span>New notebook</span>');
+    else if (route.view === 'account') parts.push('<span>Account</span>');
     else parts.push('<span>Home</span>');
     el.crumbs.innerHTML = parts.join('<i>/</i>');
   }
@@ -535,8 +557,10 @@
   }
   function appendMessage(m, { animate = true } = {}) {
     const box = $('#messages'); if (!box) return;
-    box.insertAdjacentHTML('beforeend', messageHtml(m));
-    const row = box.lastElementChild;
+    // New messages go above the scroll spacer (if any) so nothing jumps.
+    const spacer = box.querySelector('.scroll-spacer');
+    if (spacer) spacer.insertAdjacentHTML('beforebegin', messageHtml(m)); else box.insertAdjacentHTML('beforeend', messageHtml(m));
+    const row = spacer ? spacer.previousElementSibling : box.lastElementChild;
     if (animate) row.classList.add('msg-in');
     if (m.role === 'assistant') hydrateDiagrams(row);
     const listen = row.querySelector('[data-action="listen"]');
@@ -663,7 +687,9 @@
     const questions = box.querySelectorAll('.message-row.user'); const q = questions[questions.length - 1]; if (!q) return;
     let spacer = box.querySelector('.scroll-spacer');
     if (!spacer) { spacer = document.createElement('div'); spacer.className = 'scroll-spacer'; spacer.setAttribute('aria-hidden', 'true'); }
-    box.append(spacer); spacer.style.height = '0px';
+    // The spacer's own top doesn't depend on its height, so it is measured without collapsing it first
+    // (collapsing it, even for a moment, shrinks the scroll area and makes the browser jump the view down).
+    if (spacer !== box.lastElementChild) box.append(spacer);
     spacer.style.height = `${Math.max(0, box.clientHeight - (spacer.offsetTop - q.offsetTop) - 16)}px`;
   }
   function pinQuestion() {
@@ -679,9 +705,9 @@
     let row = box.querySelector('.live-row');
     if (!row) {
       box.querySelector('.chat-empty')?.remove();
-      box.querySelector('.scroll-spacer')?.remove();
-      box.insertAdjacentHTML('beforeend', '<article class="message-row assistant live-row msg-in"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
-      row = box.lastElementChild;
+      const spacer = box.querySelector('.scroll-spacer');
+      (spacer ? (h) => spacer.insertAdjacentHTML('beforebegin', h) : (h) => box.insertAdjacentHTML('beforeend', h))('<article class="message-row assistant live-row msg-in"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
+      row = box.querySelector('.live-row');
     }
     row.querySelector('.message-bubble').innerHTML = streaming.text ? md(stripReady(streaming.text)) : '<span class="typing-indicator"><i></i><i></i><i></i></span>';
     updateSpacer();
@@ -698,7 +724,7 @@
     save();
     if (route.view === 'chat' && route.chatId === chat.id) { $('#messages .chat-empty')?.remove(); appendMessage(userMessage); renderCrumbs(nb, chat, null); }
     renderSidebar(nb, chat);
-    busy = true; document.querySelectorAll('.send-button').forEach((b) => { b.disabled = true; }); $('#messages .hint-bar')?.remove();
+    busy = true; document.querySelectorAll('.send-button').forEach((b) => { b.disabled = true; }); $('#messages .hint-bar')?.remove(); $('#messages .tip-card')?.remove();
     streaming = { chatId: chat.id, text: '' }; paintLive(); pinQuestion();
     let answer = null;
     try {
@@ -728,7 +754,11 @@
       streaming = null; busy = false;
       chat.updatedAt = Date.now(); save();
       if (route.view === 'chat' && route.chatId === chat.id) {
-        $('#messages .live-row')?.remove(); $('#messages .scroll-spacer')?.remove(); appendMessage(answer); renderHintBar(chat); updateSpacer();
+        // Swap the live answer for the saved one without letting the scroll area shrink in between,
+        // so the question stays pinned at the top.
+        const box = $('#messages'), keep = box.scrollTop, q = [...box.querySelectorAll('.message-row.user')].pop(), qTop = q?.offsetTop || 0;
+        appendMessage(answer, { animate: false }); box.querySelector('.live-row')?.remove();
+        renderHintBar(chat); updateSpacer(); box.scrollTop = keep + ((q?.offsetTop || 0) - qTop);
         refreshLessonBanner(chat);
       }
       if (!answer.error) renderTip(chat);
@@ -2220,13 +2250,72 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
   $('#closeSidebar').addEventListener('click', closeSidebar);
   el.scrim.addEventListener('click', closeSidebar);
 
+  // ---------- Account page ----------
+  function viewAccount() {
+    const prof = savedProfiles().find((x) => x.id === account.id) || account;
+    const local = account.provider === 'local';
+    el.view.innerHTML = `<div class="page account-page">
+      <header class="page-hero"><span class="eyebrow">Account</span><div class="auth-who">${avatarHtml(account, 'lg')}<h1>${esc(account.name || 'You')}</h1></div>
+        <p class="lead">${local ? 'A profile saved on this device. Your tutor calls you ' + esc(firstName()) + '.' : `Signed in with Google${account.email ? ` as ${esc(account.email)}` : ''}.`}</p></header>
+      ${local ? `<section class="account-card"><h2>Change password</h2>
+        <form class="auth-form" id="changePwForm">
+          <input type="text" class="sr-only" autocomplete="username" value="${esc(account.name)}" tabindex="-1" aria-hidden="true">
+          <label for="curPw">Current password</label><input id="curPw" type="password" autocomplete="current-password" required>
+          <label for="chPw">New password</label><input id="chPw" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" placeholder="At least ${MIN_PASSWORD} characters" required>
+          <label for="chPw2">Type it again</label><input id="chPw2" type="password" autocomplete="new-password" required>
+          <p class="auth-error" id="chError" role="alert"></p>
+          <button class="btn btn-primary" type="submit">Save new password</button>
+        </form></section>
+      <section class="account-card"><h2>Recovery code</h2>
+        <p class="muted-copy">${prof.rec ? 'You have a recovery code. Lost it? Make a new one; the old one stops working.' : 'You don\u2019t have a recovery code yet. Make one so you can reset your password if you forget it.'}</p>
+        <form class="auth-form" id="newRcForm">
+          <label for="rcPw">Current password</label><input id="rcPw" type="password" autocomplete="current-password" required>
+          <p class="auth-error" id="rcError" role="alert"></p>
+          <button class="btn btn-soft" type="submit">Make a new recovery code</button>
+        </form><div id="rcShow"></div></section>`
+      : '<section class="account-card"><h2>Password</h2><p class="muted-copy">Your password is managed by your Google account. To change it, go to your Google Account settings.</p></section>'}
+      <section class="account-card"><h2>Sign out</h2><p class="muted-copy">Your chats and notebooks stay saved on this device for when you come back.</p><button type="button" class="btn btn-ghost" data-action="sign-out">Sign out</button></section>
+    </div>`;
+    if (!local) return;
+    const verify = async (pwInput, errEl) => {
+      const ok = await checkPassword(pwInput.value, (savedProfiles().find((x) => x.id === account.id) || {}).pw);
+      if (!ok) { errEl.textContent = 'Your current password isn\u2019t right.'; pwInput.value = ''; pwInput.focus(); }
+      return ok;
+    };
+    const cf = $('#changePwForm');
+    cf.addEventListener('input', () => { $('#chError').textContent = ''; });
+    cf.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#chError'), n1 = $('#chPw').value, btn = cf.querySelector('button');
+      if (n1.length < MIN_PASSWORD) { err.textContent = `Choose a password with at least ${MIN_PASSWORD} characters.`; return; }
+      if (n1 !== $('#chPw2').value) { err.textContent = 'The two new passwords don\u2019t match.'; return; }
+      btn.disabled = true;
+      if (await verify($('#curPw'), err)) { updateProfile(account.id, { pw: await hashPassword(n1) }); cf.reset(); toast('Password changed.'); }
+      btn.disabled = false;
+    });
+    const rf = $('#newRcForm');
+    rf.addEventListener('input', () => { $('#rcError').textContent = ''; });
+    rf.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = rf.querySelector('button'); btn.disabled = true;
+      if (await verify($('#rcPw'), $('#rcError'))) {
+        const code = newRecoveryCode();
+        updateProfile(account.id, { rec: await hashRecovery(code) });
+        rf.reset(); rf.hidden = true;
+        $('#rcShow').innerHTML = `<p class="muted-copy"><strong>Here\u2019s your new code.</strong> Save it now; it won\u2019t be shown again.</p>${recoveryCardHtml(code, account.name)}`;
+        wireRecoveryButtons($('#rcShow'), code, account.name);
+      }
+      btn.disabled = false;
+    });
+  }
+
   // ---------- Sign in ----------
   const avatarHtml = (p, cls = '') => p.picture
     ? `<img class="avatar ${cls}" src="${esc(p.picture)}" alt="" referrerpolicy="no-referrer">`
     : `<span class="avatar ${cls}" aria-hidden="true">${esc((p.firstName || p.name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
   function renderAccountChip() {
     const box = $('#accountChip'); if (!box || !account) return;
-    box.innerHTML = `${avatarHtml(account)}<div class="account-meta"><strong>${esc(account.name || 'Guest')}</strong><small>${esc(account.provider === 'google' ? account.email || 'Google account' : 'On this device')}</small></div><button type="button" class="sb-link" data-action="sign-out">Sign out</button>`;
+    box.innerHTML = `<a class="account-link" href="#/account" title="Account and password">${avatarHtml(account)}<div class="account-meta"><strong>${esc(account.name || 'Guest')}</strong><small>${esc(account.provider === 'google' ? account.email || 'Google account' : 'Account & password')}</small></div></a><button type="button" class="sb-link" data-action="sign-out">Sign out</button>`;
   }
   function showLogin() {
     document.body.dataset.auth = 'out';
@@ -2270,7 +2359,9 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
       if (pass.length < MIN_PASSWORD) return err(`Choose a password with at least ${MIN_PASSWORD} characters.`, '#authPass');
       if (pass !== pass2) return err('The two passwords don\u2019t match.', '#authPass2');
       const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
-      signIn({ id: `local-${uid()}`, provider: 'local', name, firstName: name.split(' ')[0], grade: $('#authGrade').value || '', pw: await hashPassword(pass) });
+      const profile = { id: `local-${uid()}`, provider: 'local', name, firstName: name.split(' ')[0], grade: $('#authGrade').value || '', pw: await hashPassword(pass) };
+      const code = newRecoveryCode();
+      recoveryStep(screen, profile, code, async () => signIn({ ...profile, rec: await hashRecovery(code) }));
     });
     setupGoogle();
   }
@@ -2290,25 +2381,88 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
         <p class="auth-error" id="pwError" role="alert"></p>
         <button class="btn btn-primary btn-lg" type="submit">${setting ? 'Save and continue →' : 'Continue →'}</button>
       </form>
-      ${setting ? '' : '<p class="auth-note">Forgot it? Passwords live only on this device, so they can\u2019t be reset by email. If you\u2019re locked out, set up a new profile.</p>'}`;
+      ${setting ? '' : '<p class="auth-note"><button type="button" class="sb-link" id="forgotPw">Forgot your password?</button></p>'}`;
     screen.querySelector('.auth-back').addEventListener('click', () => { screen.remove(); showLogin(); });
     const input = $('#pwInput'); input.focus();
+    $('#forgotPw')?.addEventListener('click', () => resetStep(screen, p));
+    // Profiles without a recovery code get one before going in.
+    const enter = async (profile) => {
+      if (profile.rec) return signIn(profile);
+      const code = newRecoveryCode();
+      recoveryStep(screen, profile, code, async () => signIn({ ...profile, rec: await hashRecovery(code) }));
+    };
     $('#pwForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = e.target.querySelector('button[type=submit]'), err = $('#pwError');
       if (setting) {
         if (input.value.length < MIN_PASSWORD) { err.textContent = `Choose a password with at least ${MIN_PASSWORD} characters.`; return input.focus(); }
         if (input.value !== $('#pwInput2').value) { err.textContent = 'The two passwords don\u2019t match.'; return $('#pwInput2').focus(); }
-        btn.disabled = true; return signIn({ ...p, pw: await hashPassword(input.value) });
+        btn.disabled = true; return enter({ ...p, pw: await hashPassword(input.value) });
       }
       btn.disabled = true;
-      if (await checkPassword(input.value, p.pw)) return signIn(p);
+      if (await checkPassword(input.value, p.pw)) return enter(p);
       fails += 1;
       err.textContent = 'That password isn\u2019t right. Try again.';
       input.value = ''; screen.querySelector('.auth-card').classList.remove('shake'); void screen.offsetWidth; screen.querySelector('.auth-card').classList.add('shake');
       // Slow down repeated guesses.
       setTimeout(() => { btn.disabled = false; input.focus(); }, fails >= 3 ? Math.min(30, 2 ** (fails - 2)) * 1000 : 0);
       if (fails >= 3) err.textContent += ` Wait a moment before the next try.`;
+    });
+  }
+  // Shows a new recovery code once; going on requires confirming it was saved.
+  function recoveryStep(screen, p, code, onDone) {
+    const card = screen.querySelector('.auth-card');
+    card.classList.remove('shake');
+    card.innerHTML = `
+      <div class="auth-who">${avatarHtml(p, 'lg')}<h1>Save your <em>recovery code</em></h1></div>
+      <p class="lead">If you ever forget your password, this code lets you set a new one. Keep it somewhere safe, like a notes app or a piece of paper. It won\u2019t be shown again.</p>
+      ${recoveryCardHtml(code, p.name)}
+      <label class="auth-check"><input type="checkbox" id="rcSaved"> I saved my recovery code</label>
+      <button class="btn btn-primary btn-lg auth-wide" type="button" id="rcContinue" disabled>Continue →</button>`;
+    wireRecoveryButtons(card, code, p.name);
+    const box = $('#rcSaved'), go = $('#rcContinue');
+    box.addEventListener('change', () => { go.disabled = !box.checked; });
+    go.addEventListener('click', () => { go.disabled = true; onDone(); });
+  }
+  // Forgot password: the recovery code sets a new password (and is replaced by a fresh code).
+  function resetStep(screen, p) {
+    let fails = 0;
+    const card = screen.querySelector('.auth-card');
+    card.innerHTML = `
+      <button type="button" class="sb-link auth-back">← Back</button>
+      <div class="auth-who">${avatarHtml(p, 'lg')}<h1>Reset your <em>password</em></h1></div>
+      ${p.rec ? `<p class="lead">Enter the recovery code you saved when you made your profile, then choose a new password.</p>
+      <form class="auth-form" id="resetForm">
+        <input type="text" class="sr-only" autocomplete="username" value="${esc(p.name)}" tabindex="-1" aria-hidden="true">
+        <label for="rcInput">Recovery code</label>
+        <input id="rcInput" autocomplete="one-time-code" placeholder="XXXX-XXXX-XXXX" spellcheck="false" autocapitalize="characters" required>
+        <label for="newPw">New password</label>
+        <input id="newPw" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" placeholder="At least ${MIN_PASSWORD} characters" required>
+        <label for="newPw2">Type it again</label>
+        <input id="newPw2" type="password" autocomplete="new-password" required>
+        <p class="auth-error" id="resetError" role="alert"></p>
+        <button class="btn btn-primary btn-lg" type="submit">Reset password →</button>
+      </form>` : `<p class="lead">This profile was made before recovery codes existed, so its password can\u2019t be reset here. If you can\u2019t remember it, go back and set up a new profile.</p>`}`;
+    card.querySelector('.auth-back').addEventListener('click', () => passwordStep(screen, savedProfiles().find((x) => x.id === p.id) || p));
+    const form = $('#resetForm'); if (!form) return;
+    $('#rcInput').focus();
+    form.addEventListener('input', () => { $('#resetError').textContent = ''; });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#resetError'), btn = form.querySelector('button[type=submit]'), pw1 = $('#newPw').value;
+      if (pw1.length < MIN_PASSWORD) { err.textContent = `Choose a password with at least ${MIN_PASSWORD} characters.`; return $('#newPw').focus(); }
+      if (pw1 !== $('#newPw2').value) { err.textContent = 'The two passwords don\u2019t match.'; return $('#newPw2').focus(); }
+      btn.disabled = true;
+      if (await checkRecovery($('#rcInput').value, p.rec)) {
+        const fresh = { ...p, pw: await hashPassword(pw1) }, code = newRecoveryCode();
+        updateProfile(p.id, { pw: fresh.pw, rec: null }); // the old code is used up right away
+        toast('Password reset.');
+        return recoveryStep(screen, fresh, code, async () => signIn({ ...fresh, rec: await hashRecovery(code) }));
+      }
+      fails += 1;
+      err.textContent = 'That recovery code isn\u2019t right. Check it and try again.' + (fails >= 3 ? ' Wait a moment before the next try.' : '');
+      card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+      setTimeout(() => { btn.disabled = false; }, fails >= 3 ? Math.min(30, 2 ** (fails - 2)) * 1000 : 0);
     });
   }
   async function setupGoogle() {
