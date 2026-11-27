@@ -39,6 +39,16 @@ Notebooks are private study spaces. Each has a goal, level, pace, optional targe
 
 With the key set: chat messages (including attached photos/PDFs) are checked for answer-seeking before the tutor replies; lesson objectives are scored after every tutor reply to unlock the lesson quiz; free-form sessions are scored against every plan objective, gap, and mistake pattern to update the learner profile; quizzes get short-answer questions graded by rubric; every generated quiz is fact-checked; mistakes are sorted by pattern; uploaded class materials are mapped to plan objectives. Without the key, each feature falls back to its earlier behavior.
 
+### Sign in (Google or a simple profile)
+
+The app opens on a sign-in screen. Students can continue with Google or just type the name the tutor should use (plus an optional grade). The tutor gets the first name and grade with every request and addresses the student by name. Each profile's chats, notebooks and activity are stored under their own keys in the browser, so people sharing a device stay separate. The first profile created on a device keeps any data saved before sign-in existed.
+
+Google sign-in needs one Vercel variable:
+
+- `GOOGLE_CLIENT_ID`: an OAuth 2.0 "Web application" client ID from Google Cloud Console (APIs & Services → Credentials). Add every site origin to its Authorized JavaScript origins.
+
+`/api/auth` returns the client ID (GET) and verifies Google ID tokens with Google before the app accepts them (POST). Without the variable, the Google button is replaced by a note and name-only profiles still work.
+
 ## Run the frontend locally
 
 Because the site calls a serverless endpoint, opening `index.html` directly will not provide a working chat API. Serve the static files locally and run the API in a compatible serverless development environment, or deploy the project to a platform that serves the `api/` function.

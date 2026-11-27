@@ -90,9 +90,51 @@
   }
   const load = (key, fallback) => { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? fallback; } catch { return fallback; } };
 
+  // ---------- Account ----------
+  // Sign in with Google (verified by /api/auth) or a simple name-only profile. Either way, each person's
+  // chats, notebooks and activity are stored under their own keys, so people sharing a device stay separate.
+  const ACCOUNT_KEY = 'educator.account.v1', PROFILES_KEY = 'educator.profiles.v1', OWNER_KEY = 'educator.dataOwner.v1';
+  const AUTH_URL = API_URL.replace(/solve$/, 'auth');
+  let account = load(ACCOUNT_KEY, null);
+  if (!account || typeof account !== 'object' || !account.id) account = null;
+  const firstName = () => (account?.firstName || String(account?.name || '').trim().split(/\s+/)[0] || '').slice(0, 40);
+  let freshProfile = false;
+  if (account) {
+    const owner = localStorage.getItem(OWNER_KEY);
+    const scoped = ['chats', 'notebooks', 'activity'];
+    if (!owner) {
+      // The first person to sign in on this device keeps whatever was saved before accounts existed.
+      try {
+        for (const k of scoped) { const v = localStorage.getItem(KEYS[k]); if (v !== null && localStorage.getItem(`${KEYS[k]}@${account.id}`) === null) localStorage.setItem(`${KEYS[k]}@${account.id}`, v); }
+        localStorage.setItem(OWNER_KEY, account.id);
+      } catch {}
+    } else if (owner !== account.id) freshProfile = true;
+    for (const k of scoped) KEYS[k] = `${KEYS[k]}@${account.id}`;
+  }
+  function learnerLine() {
+    if (!account || !firstName()) return '';
+    const grade = GRADES[account.grade];
+    return `The learner's name is ${firstName()}${grade ? ` (${grade})` : ''}. Address them by their first name now and then, in greetings, encouragement, and when checking in, but not in every message.`;
+  }
+  function saveProfiles(list) { try { localStorage.setItem(PROFILES_KEY, JSON.stringify(list.slice(0, 8))); } catch {} }
+  const savedProfiles = () => { const p = load(PROFILES_KEY, []); return Array.isArray(p) ? p.filter((x) => x && x.id) : []; };
+  function signIn(profile) {
+    const acct = { ...profile, signedInAt: Date.now() };
+    try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(acct)); } catch { toast('This browser is blocking storage, so EduCator cannot remember you.'); return; }
+    saveProfiles([{ id: acct.id, provider: acct.provider, name: acct.name, firstName: acct.firstName || '', email: acct.email || '', picture: acct.picture || '', grade: acct.grade || '' }, ...savedProfiles().filter((p) => p.id !== acct.id)]);
+    location.reload();
+  }
+  function signOut() {
+    try { localStorage.removeItem(ACCOUNT_KEY); } catch {}
+    try { window.google?.accounts?.id?.disableAutoSelect(); } catch {}
+    location.reload();
+  }
+
   // ---------- State ----------
   let chats = load(KEYS.chats, null);
   let notebooks = load(KEYS.notebooks, null);
+  // A second person on this device starts with an empty study space (no import of older data).
+  if (freshProfile) { if (!Array.isArray(chats)) chats = []; if (!Array.isArray(notebooks)) notebooks = []; }
   let route = { view: 'home' }, lastKey = null, lastAnimKey = null, flash = null;
   const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   let pendingFiles = [], busy = false, streaming = null, frame = 0, chatQuery = '', draftTemplate = null;
@@ -269,6 +311,7 @@
   window.addEventListener('popstate', () => render());
 
   function render(force = false) {
+    if (!account) return;
     const key = location.hash || '#/';
     if (!force && key === lastKey) return;
     lastKey = key;
@@ -642,7 +685,7 @@
     let answer = null;
     try {
       const history = chat.messages.slice(-30).map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', text: m.text, attachments: (m.attachments || []).map((f) => ({ name: f.name, type: f.type, data: f.data, size: f.size })) }));
-      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history, stream: true, context: nb ? notebookContext(nb, chat) : [styleLine(), 'This is a general chat in a study app. If the learner keeps working on one subject, suggest creating a notebook for it: a private study space with a diagnostic, a personalized learning plan, lessons, quizzes, and review. They can also use the "Stuck?" hint buttons, Listen, and Speak.'].filter(Boolean).join('\n') }) });
+      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history, stream: true, context: nb ? notebookContext(nb, chat) : [learnerLine(), styleLine(), 'This is a general chat in a study app. If the learner keeps working on one subject, suggest creating a notebook for it: a private study space with a diagnostic, a personalized learning plan, lessons, quizzes, and review. They can also use the "Stuck?" hint buttons, Listen, and Speak.'].filter(Boolean).join('\n') }) });
       if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `The service returned an error (${response.status}).`); }
       const add = (t) => { streaming.text += t; if (!frame) frame = requestAnimationFrame(paintLive); };
       let failure = '';
@@ -684,6 +727,7 @@
   // ---------- Notebook context + JSON generation ----------
   function notebookContext(nb, chat = null) {
     const lines = [`This conversation happens inside the learner's private notebook "${nb.name}", a long-term study space. Act as their ongoing personal tutor for this subject: build on what they have already covered, connect new ideas to their plan, and keep them moving toward their goal.`];
+    if (learnerLine()) lines.push(learnerLine());
     if (nb.goal) lines.push(`Learner's goal: ${nb.goal}`);
     if (gradeLabel(nb)) lines.push(`Grade / level: ${gradeLabel(nb)}.`);
     if (nb.struggles) lines.push(`What they are struggling with: ${nb.struggles}`);
@@ -1042,7 +1086,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       ['🗣️', 'Practice a language', 'Let\'s practice a language conversation. Ask me which language and my level, then start a simple conversation.']
     ];
     el.view.innerHTML = `<div class="page home">
-      <header class="page-hero"><div class="welcome-back"><span class="eyebrow">Your study space</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
+      <header class="page-hero"><div class="welcome-back"><span class="eyebrow">${firstName() ? `Hi, ${esc(firstName())}` : 'Your study space'}</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
         <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
       <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
       ${(() => { const top = notebooks.map((n) => ({ n, r: coach(n)[0] })).filter((x) => x.r).sort((a, b) => b.r.p - a.r.p)[0];
@@ -1943,6 +1987,7 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
     template: (t) => { draftTemplate = TEMPLATES[t.dataset.key]; go('#/notebooks/new'); },
     'rename-chat': (t) => { const chat = chats.find((c) => c.id === t.dataset.id); if (!chat) return; showDialog({ title: 'Rename conversation', label: 'Conversation name', value: chat.title, saveText: 'Save name', onSave: (v) => { chat.title = v; save(); render(true); } }); },
     'delete-chat': (t) => deleteChat(t.dataset.id),
+    'sign-out': () => showDialog({ title: 'Sign out?', label: 'Your chats and notebooks stay saved on this device for when you come back.', confirm: true, saveText: 'Sign out', onSave: signOut }),
     'clear-chats': () => {
       if (!generalChats().length) return toast('There are no chats to clear.');
       showDialog({ title: 'Clear chat history?', label: 'This deletes all general chats saved in this browser. Notebook sessions are kept.', confirm: true, danger: true, saveText: 'Clear chats', onSave: () => { chats = chats.filter((c) => c.notebookId); save(); go('#/'); toast('Chat history cleared.'); } });
@@ -2156,6 +2201,76 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
   $('#closeSidebar').addEventListener('click', closeSidebar);
   el.scrim.addEventListener('click', closeSidebar);
 
+  // ---------- Sign in ----------
+  const avatarHtml = (p, cls = '') => p.picture
+    ? `<img class="avatar ${cls}" src="${esc(p.picture)}" alt="" referrerpolicy="no-referrer">`
+    : `<span class="avatar ${cls}" aria-hidden="true">${esc((p.firstName || p.name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
+  function renderAccountChip() {
+    const box = $('#accountChip'); if (!box || !account) return;
+    box.innerHTML = `${avatarHtml(account)}<div class="account-meta"><strong>${esc(account.name || 'Guest')}</strong><small>${esc(account.provider === 'google' ? account.email || 'Google account' : 'On this device')}</small></div><button type="button" class="sb-link" data-action="sign-out">Sign out</button>`;
+  }
+  function showLogin() {
+    document.body.dataset.auth = 'out';
+    const local = savedProfiles().filter((p) => p.provider === 'local');
+    const screen = document.createElement('div');
+    screen.className = 'auth-screen';
+    screen.innerHTML = `<div class="auth-card enter">
+      <a class="brand" href="../../"><span class="brand-mark">E</span><span>Edu<span class="brand-accent">Cator</span></span></a>
+      <h1>Welcome! Who's <em>studying</em> today?</h1>
+      <p class="lead">Sign in so your tutor knows who you are. Your chats and notebooks stay saved on this device.</p>
+      ${local.length ? `<div class="auth-profiles"><span class="eyebrow">Continue as</span>${local.map((p) => `<button type="button" class="auth-profile" data-id="${esc(p.id)}">${avatarHtml(p)}<span>${esc(p.name)}</span><b aria-hidden="true">→</b></button>`).join('')}</div>` : ''}
+      <div class="auth-google"><div id="gsiButton" class="gsi-slot"><span class="auth-loading">Loading Google sign-in…</span></div></div>
+      <div class="auth-or"><span>or set up a profile</span></div>
+      <form class="auth-form" id="localForm">
+        <label for="authName">What should your tutor call you?</label>
+        <input id="authName" maxlength="40" autocomplete="given-name" placeholder="Your first name" required>
+        <label for="authGrade">Grade <span class="optional">(optional)</span></label>
+        <select id="authGrade"><option value="">Choose…</option>${Object.entries(GRADES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select>
+        <button class="btn btn-primary btn-lg" type="submit">Get started →</button>
+      </form>
+      <p class="auth-note">🔒 EduCator only uses your name to talk to you. Nothing is shared with your school or anyone else.</p>
+    </div>`;
+    document.body.appendChild(screen);
+    screen.addEventListener('click', (e) => {
+      const b = e.target.closest('.auth-profile'); if (!b) return;
+      const p = savedProfiles().find((x) => x.id === b.dataset.id); if (p) signIn(p);
+    });
+    $('#localForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = $('#authName').value.trim().replace(/\s+/g, ' ');
+      if (!name) return $('#authName').focus();
+      const same = local.find((p) => p.name.toLowerCase() === name.toLowerCase());
+      signIn({ id: same?.id || `local-${uid()}`, provider: 'local', name, firstName: name.split(' ')[0], grade: $('#authGrade').value || same?.grade || '' });
+    });
+    setupGoogle();
+  }
+  async function setupGoogle() {
+    const slot = $('#gsiButton');
+    const off = (msg) => { slot.innerHTML = `<p class="auth-muted">${msg}</p>`; };
+    let clientId = null;
+    try { const r = await fetch(AUTH_URL); clientId = (await r.json()).googleClientId; } catch { return off('Google sign-in is unavailable right now. You can set up a profile below.'); }
+    if (!clientId) return off('Google sign-in isn’t switched on yet. Set up a profile below for now.');
+    try {
+      await new Promise((resolve, reject) => {
+        if (window.google?.accounts?.id) return resolve();
+        const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = resolve; sc.onerror = reject; document.head.appendChild(sc);
+      });
+    } catch { return off('Google sign-in could not load (a blocker may be stopping it). Set up a profile below instead.'); }
+    google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential, ux_mode: 'popup', context: 'signin' });
+    slot.innerHTML = '';
+    google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with', logo_alignment: 'left', width: Math.min(320, slot.clientWidth || 320) });
+  }
+  async function onGoogleCredential(resp) {
+    const slot = $('#gsiButton');
+    try {
+      const r = await fetch(AUTH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential: resp.credential }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.profile) throw new Error(d.error || 'Sign-in failed.');
+      const p = d.profile;
+      signIn({ id: `g-${p.sub}`, provider: 'google', name: p.name || p.firstName || 'Student', firstName: p.firstName || '', email: p.email, picture: p.picture });
+    } catch (err) { toast(err.message || 'Google sign-in failed. Please try again.'); if (slot) slot.classList.add('shake'); }
+  }
+
   // ---------- Boot ----------
   migrate();
   if (!Array.isArray(chats)) chats = [];
@@ -2167,6 +2282,8 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
   const unused = (nb) => AUTO_CREATED.includes(nb.name) && !nb.goal && !nb.struggles && !nb.plan && !nb.quizzes.length && !chats.some((c) => c.notebookId === nb.id);
   if (notebooks.some(unused)) { notebooks = notebooks.filter((nb) => !unused(nb)); save(); }
   applyFont(localStorage.getItem(KEYS.font) || 'rounded');
+  if (!account) { showLogin(); return; }
+  renderAccountChip();
   // Find out whether decision checks are available, then catch up on sessions that ended without analysis.
   const wasOn = decisionsOn;
   checkDecisions().then(() => {
