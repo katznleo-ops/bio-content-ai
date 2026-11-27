@@ -119,11 +119,29 @@
   function saveProfiles(list) { try { localStorage.setItem(PROFILES_KEY, JSON.stringify(list.slice(0, 8))); } catch {} }
   const savedProfiles = () => { const p = load(PROFILES_KEY, []); return Array.isArray(p) ? p.filter((x) => x && x.id) : []; };
   function signIn(profile) {
-    const acct = { ...profile, signedInAt: Date.now() };
+    const { pw, ...rest } = profile;
+    const acct = { ...rest, signedInAt: Date.now() };
+    const keepPw = pw || savedProfiles().find((p) => p.id === acct.id)?.pw || null;
     try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(acct)); } catch { toast('This browser is blocking storage, so EduCator cannot remember you.'); return; }
-    saveProfiles([{ id: acct.id, provider: acct.provider, name: acct.name, firstName: acct.firstName || '', email: acct.email || '', picture: acct.picture || '', grade: acct.grade || '' }, ...savedProfiles().filter((p) => p.id !== acct.id)]);
+    saveProfiles([{ id: acct.id, provider: acct.provider, name: acct.name, firstName: acct.firstName || '', email: acct.email || '', picture: acct.picture || '', grade: acct.grade || '', ...(keepPw ? { pw: keepPw } : {}) }, ...savedProfiles().filter((p) => p.id !== acct.id)]);
     location.reload();
   }
+  // Profile passwords are never stored: only a salted PBKDF2 hash (150,000 rounds of SHA-256).
+  const bytesToB64 = (bytes) => btoa(String.fromCharCode(...bytes));
+  const unb64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+  async function hashPassword(password, saltB64 = '') {
+    const salt = saltB64 ? unb64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 150000, hash: 'SHA-256' }, key, 256);
+    return { salt: bytesToB64(salt), hash: bytesToB64(new Uint8Array(bits)) };
+  }
+  async function checkPassword(password, pw) {
+    if (!pw?.salt || !pw?.hash) return false;
+    const { hash } = await hashPassword(password, pw.salt);
+    let diff = hash.length ^ pw.hash.length; for (let i = 0; i < Math.min(hash.length, pw.hash.length); i++) diff |= hash.charCodeAt(i) ^ pw.hash.charCodeAt(i);
+    return diff === 0;
+  }
+  const MIN_PASSWORD = 6;
   function signOut() {
     try { localStorage.removeItem(ACCOUNT_KEY); } catch {}
     try { window.google?.accounts?.id?.disableAutoSelect(); } catch {}
@@ -2226,6 +2244,11 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
         <input id="authName" maxlength="40" autocomplete="given-name" placeholder="Your first name" required>
         <label for="authGrade">Grade <span class="optional">(optional)</span></label>
         <select id="authGrade"><option value="">Choose…</option>${Object.entries(GRADES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select>
+        <label for="authPass">Password</label>
+        <input id="authPass" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" placeholder="At least ${MIN_PASSWORD} characters" required>
+        <label for="authPass2">Type it again</label>
+        <input id="authPass2" type="password" autocomplete="new-password" minlength="${MIN_PASSWORD}" required>
+        <p class="auth-error" id="localError" role="alert"></p>
         <button class="btn btn-primary btn-lg" type="submit">Get started →</button>
       </form>
       <p class="auth-note">🔒 EduCator only uses your name to talk to you. Nothing is shared with your school or anyone else.</p>
@@ -2233,16 +2256,59 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
     document.body.appendChild(screen);
     screen.addEventListener('click', (e) => {
       const b = e.target.closest('.auth-profile'); if (!b) return;
-      const p = savedProfiles().find((x) => x.id === b.dataset.id); if (p) signIn(p);
+      const p = savedProfiles().find((x) => x.id === b.dataset.id); if (p) passwordStep(screen, p);
     });
-    $('#localForm').addEventListener('submit', (e) => {
+    $('#localForm').addEventListener('input', () => { $('#localError').textContent = ''; });
+    $('#localForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const name = $('#authName').value.trim().replace(/\s+/g, ' ');
-      if (!name) return $('#authName').focus();
+      const name = $('#authName').value.trim().replace(/\s+/g, ' '), pass = $('#authPass').value, pass2 = $('#authPass2').value;
+      const err = (msg, field) => { $('#localError').textContent = msg; $(field)?.focus(); };
+      if (!name) return err('Type the name your tutor should use.', '#authName');
       const same = local.find((p) => p.name.toLowerCase() === name.toLowerCase());
-      signIn({ id: same?.id || `local-${uid()}`, provider: 'local', name, firstName: name.split(' ')[0], grade: $('#authGrade').value || same?.grade || '' });
+      if (same) return err(`There's already a profile called ${same.name} on this device. Pick it above, or use a different name.`, '#authName');
+      if (pass.length < MIN_PASSWORD) return err(`Choose a password with at least ${MIN_PASSWORD} characters.`, '#authPass');
+      if (pass !== pass2) return err('The two passwords don\u2019t match.', '#authPass2');
+      const btn = e.target.querySelector('button[type=submit]'); btn.disabled = true;
+      signIn({ id: `local-${uid()}`, provider: 'local', name, firstName: name.split(' ')[0], grade: $('#authGrade').value || '', pw: await hashPassword(pass) });
     });
     setupGoogle();
+  }
+  // Opening a saved profile asks for its password (profiles made before passwords existed set one now).
+  function passwordStep(screen, p) {
+    const setting = !p.pw;
+    let fails = 0;
+    screen.querySelector('.auth-card').innerHTML = `
+      <button type="button" class="sb-link auth-back">← Back</button>
+      <div class="auth-who">${avatarHtml(p, 'lg')}<h1>${setting ? `Set a password, <em>${esc(p.firstName || p.name)}</em>` : `Welcome back, <em>${esc(p.firstName || p.name)}</em>`}</h1></div>
+      <p class="lead">${setting ? 'Your profile doesn\u2019t have a password yet. Choose one so only you can open your notebooks.' : 'Enter your password to open your study space.'}</p>
+      <form class="auth-form" id="pwForm">
+        <input type="text" class="sr-only" autocomplete="username" value="${esc(p.name)}" tabindex="-1" aria-hidden="true">
+        <label for="pwInput">${setting ? 'New password' : 'Password'}</label>
+        <input id="pwInput" type="password" autocomplete="${setting ? 'new-password' : 'current-password'}" ${setting ? `minlength="${MIN_PASSWORD}" placeholder="At least ${MIN_PASSWORD} characters"` : ''} required>
+        ${setting ? '<label for="pwInput2">Type it again</label><input id="pwInput2" type="password" autocomplete="new-password" required>' : ''}
+        <p class="auth-error" id="pwError" role="alert"></p>
+        <button class="btn btn-primary btn-lg" type="submit">${setting ? 'Save and continue →' : 'Continue →'}</button>
+      </form>
+      ${setting ? '' : '<p class="auth-note">Forgot it? Passwords live only on this device, so they can\u2019t be reset by email. If you\u2019re locked out, set up a new profile.</p>'}`;
+    screen.querySelector('.auth-back').addEventListener('click', () => { screen.remove(); showLogin(); });
+    const input = $('#pwInput'); input.focus();
+    $('#pwForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button[type=submit]'), err = $('#pwError');
+      if (setting) {
+        if (input.value.length < MIN_PASSWORD) { err.textContent = `Choose a password with at least ${MIN_PASSWORD} characters.`; return input.focus(); }
+        if (input.value !== $('#pwInput2').value) { err.textContent = 'The two passwords don\u2019t match.'; return $('#pwInput2').focus(); }
+        btn.disabled = true; return signIn({ ...p, pw: await hashPassword(input.value) });
+      }
+      btn.disabled = true;
+      if (await checkPassword(input.value, p.pw)) return signIn(p);
+      fails += 1;
+      err.textContent = 'That password isn\u2019t right. Try again.';
+      input.value = ''; screen.querySelector('.auth-card').classList.remove('shake'); void screen.offsetWidth; screen.querySelector('.auth-card').classList.add('shake');
+      // Slow down repeated guesses.
+      setTimeout(() => { btn.disabled = false; input.focus(); }, fails >= 3 ? Math.min(30, 2 ** (fails - 2)) * 1000 : 0);
+      if (fails >= 3) err.textContent += ` Wait a moment before the next try.`;
+    });
   }
   async function setupGoogle() {
     const slot = $('#gsiButton');
