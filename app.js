@@ -1104,15 +1104,16 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       ['🗣️', 'Practice a language', 'Let\'s practice a language conversation. Ask me which language and my level, then start a simple conversation.']
     ];
     el.view.innerHTML = `<div class="page home">
+      ${notebooks.length || Object.keys(activity()).length ? streakCard('streak-banner') : ''}
       <header class="page-hero"><div class="welcome-back"><span class="eyebrow">${firstName() ? `Hi, ${esc(firstName())}` : 'Your study space'}</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
         <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
       <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
-      ${(() => { const top = notebooks.map((n) => ({ n, r: coach(n)[0] })).filter((x) => x.r).sort((a, b) => b.r.p - a.r.p)[0];
-        return top ? `<section class="coach-card home-coach" style="--accent:${colorHex(top.n.color)}"><div class="coach-main"><span class="coach-icon" aria-hidden="true">${top.r.icon}</span><div class="coach-copy"><span class="eyebrow">Today I recommend · ${esc(top.n.icon)} ${esc(top.n.name)}</span><h3>${esc(top.r.title)}</h3><p>${mdInline(top.r.why)}</p></div>${recButton(top.r, 'btn-primary btn-lg')}</div></section>${streakCard()}` : ''; })()}
       ${composer('home', 'Ask anything you\'re curious about…', { big: true })}
       <div class="starter-row">${starters.map(([icon, label, prompt]) => `<button type="button" class="starter" data-action="starter" data-prompt="${esc(prompt)}"><span>${icon}</span>${label}</button>`).join('')}</div>
       <section class="home-section">
         <div class="section-head"><div><h2>Your notebooks</h2><p>Private study spaces with a learning plan, lessons, and quizzes.</p></div><a class="btn btn-soft" href="#/notebooks/new">＋ New notebook</a></div>
+        ${(() => { const top = notebooks.map((n) => ({ n, r: coach(n)[0] })).filter((x) => x.r).sort((a, b) => b.r.p - a.r.p)[0];
+        return top ? `<section class="coach-card home-coach nb-coach" style="--accent:${colorHex(top.n.color)}"><div class="coach-main"><span class="coach-icon" aria-hidden="true">${top.r.icon}</span><div class="coach-copy"><span class="eyebrow">Today I recommend · ${esc(top.n.icon)} ${esc(top.n.name)}</span><h3>${esc(top.r.title)}</h3><p>${mdInline(top.r.why)}</p></div>${recButton(top.r, 'btn-primary btn-lg')}</div></section>` : ''; })()}
         ${notebooks.length ? `<div class="nb-grid">${notebooks.map(notebookCard).join('')}</div>` : `
         <div class="nb-intro">
           <div class="nb-step tint-lilac"><span>01</span><strong>Set a goal</strong><small>Tell us your level and how much time you have.</small></div>
@@ -1803,10 +1804,10 @@ Speak to me directly. Use $...$ only for real math.`, notebookContext(nb, chat))
     return `<section class="coach-card"><div class="coach-main"><span class="coach-icon" aria-hidden="true">${top.icon}</span><div class="coach-copy"><span class="eyebrow">${eyebrow}</span><h3>${esc(top.title)}</h3><p>${mdInline(top.why)}</p></div>${recButton(top, 'btn-primary btn-lg')}</div>
       ${rest.length ? `<div class="coach-more"><span class="coach-more-label">Also worth doing</span>${rest.slice(0, 2).map((r) => `<div class="coach-row"><span aria-hidden="true">${r.icon}</span><div><strong>${esc(r.title)}</strong><small>${mdInline(r.why)}</small></div>${recButton(r, 'btn-ghost btn-sm')}</div>`).join('')}</div>` : ''}</section>`;
   }
-  function streakCard() {
+  function streakCard(extra = '') {
     const s = streakInfo();
     const msg = s.studiedToday ? (s.days >= s.goal ? 'Weekly goal reached. Amazing consistency!' : `${s.goal - s.days} more day${s.goal - s.days === 1 ? '' : 's'} to hit your weekly goal.`) : s.streak ? `Study today to keep your ${s.streak}-day streak going.` : 'Study today to start a streak.';
-    return `<div class="streak-card"><div class="streak-flame${s.studiedToday ? ' lit' : ''}" aria-hidden="true">🔥</div><div class="streak-copy"><strong>${s.streak ? `${s.streak}-day streak` : 'No streak yet'}</strong><small>${msg}</small></div>
+    return `<div class="streak-card ${extra}"><div class="streak-flame${s.studiedToday ? ' lit' : ''}" aria-hidden="true">🔥</div><div class="streak-copy"><strong>${s.streak ? `${s.streak}-day streak` : 'No streak yet'}</strong><small>${msg}</small></div>
       <div class="week-dots" aria-label="${s.days} of ${s.goal} study days this week">${s.week.map((d) => `<span class="wd${d.done ? ' done' : ''}${d.today ? ' today' : ''}${d.future ? ' future' : ''}"><i></i>${d.label}</span>`).join('')}<em>${s.days}/${s.goal}</em></div></div>`;
   }
   function sparkline(values) {

@@ -945,3 +945,9 @@ body[data-auth="out"] .app-shell{display:none}
 .avatar.lg{width:52px;height:52px;font-size:22px}
 .auth-error{margin:2px 0 0;min-height:1.2em;font-size:13.5px;color:#c23b3b}
 .auth-error:empty{min-height:0}
+/* Home: streak as a banner across the top; the coach sits with the notebooks */
+.streak-card.streak-banner{margin:0 0 26px;padding:12px 18px;border:0;border-radius:14px;background:linear-gradient(90deg,#fff3e6,#fdf0f6 55%,#f1effd);box-shadow:inset 0 0 0 1px #f3e3d6}
+.streak-banner .streak-flame{font-size:22px}
+.streak-banner .streak-copy{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.streak-banner .streak-copy strong{font-size:15px}
+.home-coach.nb-coach{margin:0 0 18px}
