@@ -16,7 +16,7 @@
 
   // ---------- Config ----------
   const API_URL = window.EDUCATOR_API_URL || 'https://bio-content-ai-revised.vercel.app/api/solve';
-  const KEYS = { chats: 'educator.chats.v3', notebooks: 'educator.notebooks.v3', font: 'educator.fontTheme.v1' };
+  const KEYS = { chats: 'educator.chats.v3', notebooks: 'educator.notebooks.v3', font: 'educator.fontTheme.v1', style: 'educator.explainStyle.v1', activity: 'educator.activity.v1' };
   const LEGACY = { chats: 'educator.conversations.v2', topics: 'educator.topics.v2' };
   const FONTS = { sans: "'DM Sans',system-ui,sans-serif", rounded: "'Nunito',system-ui,sans-serif", serif: "'Lora',Georgia,serif", readable: "'Atkinson Hyperlegible',Arial,sans-serif" };
   const MAX_FILES = 4, MAX_FILE_SIZE = 1024 * 1024, MAX_TOTAL_SIZE = 2 * 1024 * 1024;
@@ -36,8 +36,22 @@
     { id: 'hint', icon: '💡', label: 'Give me a hint', text: '💡 Can I have a hint? Just a small nudge, please.' },
     { id: 'bigger', icon: '🔎', label: 'A bigger hint', text: '🔎 I\'m still stuck. Can I have a bigger hint?' },
     { id: 'example', icon: '🧩', label: 'Show a similar example', text: '🧩 Can you show me a similar example worked out, with different numbers or content?' },
-    { id: 'different', icon: '🔄', label: 'Explain it differently', text: '🔄 Can you explain that a different way, maybe with an analogy or a picture in words?' }
+    { id: 'different', icon: '🔄', label: 'Explain it differently', text: '🔄 Can you explain that a different way, maybe with an analogy or a picture in words?' },
+    { id: 'check', icon: '🗣', label: 'Check my understanding', text: '🗣 Can you check my understanding? Ask me to explain the idea back in my own words, then tell me what I got right and what to fix.' }
   ];
+  // Lessons are earned: a real back-and-forth with the tutor, then a passed lesson quiz.
+  const MIN_LESSON_EXCHANGES = 6, READY_EXCHANGES = 4, PASS_RATIO = 0.7;
+  const READY_TOKEN = '[[READY_FOR_QUIZ]]';
+  const stripReady = (t) => String(t || '').replace(/\n?\[\[READY[_A-Z]*\]?\]?\s*$/g, '').replace(/\[\[READY_FOR_QUIZ\]\]/g, '');
+  const DAY = 86400000;
+  const REVIEW_INTERVALS = [1, 3, 7, 14]; // days between spaced reviews of a missed question
+  const STYLES = { balanced: 'Balanced', steps: 'Step by step', visual: 'Visual & analogies', examples: 'Real-world examples', concise: 'Short & direct' };
+  const STYLE_PROMPTS = {
+    steps: 'Explain in small, numbered steps, one idea at a time, checking in before moving on.',
+    visual: 'Lean on analogies, mental pictures, and small Mermaid diagrams when they help.',
+    examples: 'Anchor every idea in a concrete, real-world example the learner can relate to.',
+    concise: 'Keep explanations short and direct, then go straight to a question or task.'
+  };
   const DIFFICULTIES = { easier: 'Easier', matched: 'Just right', challenge: 'Challenge me' };
   // The original pastel subject cards; each opens a pre-filled notebook form.
   // The pastel subject cards. They only pick a subject area: the learner fills in the rest.
@@ -113,6 +127,59 @@
   }
 
   const findNb = (id) => notebooks.find((n) => n.id === id);
+  const explainStyle = () => (STYLES[localStorage.getItem(KEYS.style)] ? localStorage.getItem(KEYS.style) : 'balanced');
+  const styleLine = () => (STYLE_PROMPTS[explainStyle()] ? `Preferred explanation style: ${STYLE_PROMPTS[explainStyle()]}` : '');
+
+  // Study activity (for streaks and the weekly goal), stored per calendar day.
+  const dayKey = (t = Date.now()) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const activity = () => { const a = load(KEYS.activity, {}); return a && typeof a === 'object' ? a : {}; };
+  function logActivity() { const a = activity(); a[dayKey()] = (a[dayKey()] || 0) + 1; try { localStorage.setItem(KEYS.activity, JSON.stringify(a)); } catch {} }
+  function streakInfo() {
+    const a = activity(); let streak = 0, t = Date.now();
+    if (!a[dayKey(t)]) t -= DAY;
+    while (a[dayKey(t)]) { streak += 1; t -= DAY; }
+    const monday = new Date(); monday.setHours(12, 0, 0, 0); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const today = dayKey();
+    const week = [...Array(7)].map((_, i) => { const k = dayKey(monday.getTime() + i * DAY); return { label: 'MTWTFSS'[i], done: !!a[k], today: k === today, future: k > today }; });
+    const goal = notebooks.length ? Math.max(...notebooks.map((n) => ({ light: 3, steady: 5, intensive: 6 }[n.pace] || 4))) : 4;
+    return { streak, week, days: week.filter((d) => d.done).length, goal, studiedToday: !!a[today] };
+  }
+
+  // Lesson progress: not started → learning → ready for the quiz → done (after passing it).
+  const lessonSession = (nb, lessonId) => chats.find((c) => c.lessonId === lessonId && c.notebookId === nb.id);
+  function lessonState(nb, l) {
+    const s = lessonSession(nb, l.id), n = s ? s.messages.filter((m) => m.role === 'user').length : 0;
+    const tutorReady = !!s?.readyForQuiz, ready = n >= MIN_LESSON_EXCHANGES || (tutorReady && n >= READY_EXCHANGES);
+    const last = nb.quizzes.filter((q) => q.lessonId === l.id && q.attempts.length).map((q) => ({ q, a: q.attempts[q.attempts.length - 1] })).sort((x, y) => y.a.at - x.a.at)[0] || null;
+    const target = tutorReady ? READY_EXCHANGES : MIN_LESSON_EXCHANGES;
+    return { state: l.done ? 'done' : !s ? 'new' : ready ? 'ready' : 'learning', n, target, need: Math.max(0, target - n), tutorReady, ready, session: s, last, lastRatio: last ? last.a.score / last.a.total : null };
+  }
+
+  // Mistake log with spaced review: missed (or guessed) questions come back after 1, 3, 7, then 14 days.
+  const qKey = (q) => String(q.question || '').replace(/\s+/g, ' ').trim().slice(0, 160).toLowerCase();
+  const dueMistakes = (nb) => (nb.mistakes || []).filter((m) => !m.mastered && m.dueAt <= Date.now());
+  const activeMistakes = (nb) => (nb.mistakes || []).filter((m) => !m.mastered);
+  function advanceMistake(m) { m.box += 1; if (m.box >= REVIEW_INTERVALS.length) { m.mastered = true; m.masteredAt = Date.now(); } else m.dueAt = Date.now() + REVIEW_INTERVALS[m.box] * DAY; }
+  function recordMistakes(nb, quiz, attempt) {
+    nb.mistakes ||= [];
+    quiz.questions.forEach((q, i) => {
+      const mine = attempt.answers[i], ok = mine === q.answer, conf = attempt.confidence?.[i], key = qKey(q);
+      const existing = nb.mistakes.find((m) => m.key === key);
+      if (!ok || conf === 'guess') {
+        const fields = { myAnswer: mine, confidence: conf || '', lucky: ok, at: Date.now(), box: 0, dueAt: Date.now() + DAY, mastered: false };
+        if (existing) Object.assign(existing, fields);
+        else nb.mistakes.unshift({ id: uid(), key, q: { question: q.question, choices: q.choices, answer: q.answer, explanation: q.explanation }, source: quiz.title, lessonId: quiz.lessonId || '', ...fields });
+      } else if (existing && !existing.mastered) advanceMistake(existing);
+    });
+    nb.mistakes = nb.mistakes.slice(0, 80);
+  }
+  function updateMistakesFromReview(nb, quiz, attempt) {
+    (quiz.mistakeIds || []).forEach((id, i) => {
+      const m = (nb.mistakes || []).find((x) => x.id === id); if (!m) return;
+      if (attempt.answers[i] === quiz.questions[i].answer && attempt.confidence?.[i] !== 'guess') advanceMistake(m);
+      else { m.box = 0; m.dueAt = Date.now() + DAY; m.myAnswer = attempt.answers[i]; }
+    });
+  }
   const gradeLabel = (nb) => GRADES[nb.grade] || (nb.level ? LEVELS[nb.level] : '') || '';
   const diagnosticOf = (nb) => nb.quizzes.find((q) => q.kind === 'diagnostic');
   function diagnosticSummary(nb) {
@@ -168,7 +235,8 @@
       const base = { nbId: p[1] };
       if (p[2] === 'chat' && p[3]) return { ...base, view: 'chat', chatId: p[3] };
       if (p[2] === 'quiz' && p[3]) return { ...base, view: 'quiz', quizId: p[3] };
-      if (['plan', 'quizzes', 'sessions', 'settings'].includes(p[2])) return { ...base, view: `nb-${p[2]}` };
+      if (p[2] === 'cards' && p[3]) return { ...base, view: 'cards', deckId: p[3] };
+      if (['plan', 'quizzes', 'sessions', 'settings', 'review', 'materials', 'report'].includes(p[2])) return { ...base, view: `nb-${p[2]}` };
       return { ...base, view: 'nb-overview' };
     }
     return { view: 'home' };
@@ -199,16 +267,20 @@
     }
     // Snapshot what is on screen so the new render can animate from it.
     const routeChanged = key !== lastAnimKey; lastAnimKey = key;
-    const before = { bars: [...el.view.querySelectorAll('.progress i')].map((b) => b.style.width), hadResult: !!el.view.querySelector('.result-card'), quizStep: el.view.querySelector('.quiz-card')?.dataset.step };
+    const before = { bars: [...el.view.querySelectorAll('.progress i')].map((b) => b.style.width), hadResult: !!el.view.querySelector('.result-card'), quizStep: el.view.querySelector('.quiz-card, .flashcard')?.dataset.step };
+    let deck = null;
+    if (route.view === 'cards') { deck = (nb.decks || []).find((d) => d.id === route.deckId); if (!deck) return go(`#/nb/${nb.id}/review`, { replace: true }); }
     document.body.dataset.mode = nb ? 'notebook' : 'general';
     document.body.style.setProperty('--accent', nb ? colorHex(nb.color) : COLORS[0].hex);
     renderSidebar(nb, chat);
     const views = {
       home: viewHome, 'new-notebook': () => viewNotebookForm(null), chat: () => viewChat(chat, nb),
       'nb-overview': () => viewOverview(nb), 'nb-plan': () => viewPlan(nb), 'nb-quizzes': () => viewQuizzes(nb),
-      'nb-sessions': () => viewSessions(nb), 'nb-settings': () => viewNotebookForm(nb), quiz: () => viewQuiz(nb, quiz)
+      'nb-sessions': () => viewSessions(nb), 'nb-settings': () => viewNotebookForm(nb), quiz: () => viewQuiz(nb, quiz),
+      'nb-review': () => viewReview(nb), 'nb-materials': () => viewMaterials(nb), 'nb-report': () => viewReport(nb), cards: () => viewCards(nb, deck)
     };
     (views[route.view] || viewHome)();
+    hydrateDiagrams(el.view);
     renderCrumbs(nb, chat, quiz);
     animateView(routeChanged, before);
     document.title = `${nb ? nb.name : chat ? chat.title : 'Study space'} · EduCator`;
@@ -228,7 +300,7 @@
       void bar.offsetWidth; bar.style.transition = ''; bar.style.width = target;
     });
     // A new quiz question slides in; a fresh result counts up.
-    const card = el.view.querySelector('.quiz-card');
+    const card = el.view.querySelector('.quiz-card, .flashcard');
     if (card && before.quizStep !== undefined && before.quizStep !== card.dataset.step) card.classList.add('slide-in');
     const result = el.view.querySelector('.result-card');
     if (result && !before.hadResult) {
@@ -251,7 +323,7 @@
     const parts = [`<a href="#/">EduCator</a>`];
     if (nb) {
       parts.push(`<a href="#/nb/${nb.id}">${esc(nb.icon)} ${esc(nb.name)}</a>`);
-      const labels = { 'nb-plan': 'Learning plan', 'nb-quizzes': 'Quizzes', 'nb-sessions': 'Sessions', 'nb-settings': 'Settings' };
+      const labels = { 'nb-plan': 'Learning plan', 'nb-quizzes': 'Quizzes', 'nb-sessions': 'Sessions', 'nb-settings': 'Settings', 'nb-review': 'Review', 'nb-materials': 'Class materials', 'nb-report': 'Progress report', cards: 'Flashcards' };
       if (labels[route.view]) parts.push(`<span>${labels[route.view]}</span>`);
       if (chat) parts.push(`<span>${esc(chat.title)}</span>`);
       if (quiz) parts.push(`<a href="#/nb/${nb.id}/quizzes">Quizzes</a>`, `<span>${esc(quiz.title)}</span>`);
@@ -303,12 +375,16 @@
         ${tab('nb-overview', `#/nb/${nb.id}`, '◎', 'Overview')}
         ${tab('nb-plan', `#/nb/${nb.id}/plan`, '↗', 'Learning plan')}
         ${tab('nb-quizzes', `#/nb/${nb.id}/quizzes`, '✦', 'Quizzes')}
+        ${tab('nb-review', `#/nb/${nb.id}/review`, '🔁', `Review${dueMistakes(nb).length ? ` <b class="sb-badge">${dueMistakes(nb).length}</b>` : ''}`)}
         ${tab('nb-sessions', `#/nb/${nb.id}/sessions`, '✎', 'Sessions')}
       </nav>
       <a class="sb-new" href="#/nb/${nb.id}/sessions"><span class="plus-icon">＋</span> New session</a>
       <div class="sb-heading"><span>Sessions in this notebook</span></div>
       <div class="sb-chats">${sessions.map((c) => chatRow(c, `#/nb/${nb.id}/chat/${c.id}`, chat?.id === c.id)).join('') || '<p class="sb-empty">Sessions you start here stay inside this notebook.</p>'}</div>
-      <a class="sb-settings${route.view === 'nb-settings' ? ' active' : ''}" href="#/nb/${nb.id}/settings">⚙ Notebook settings</a>`;
+      <div class="sb-extra">
+        <a class="sb-settings${route.view === 'nb-materials' ? ' active' : ''}" href="#/nb/${nb.id}/materials">📎 Class materials${(nb.materials || []).length ? ` <b class="sb-count">${nb.materials.length}</b>` : ''}</a>
+        <a class="sb-settings${route.view === 'nb-report' ? ' active' : ''}" href="#/nb/${nb.id}/report">📄 Progress report</a>
+        <a class="sb-settings${route.view === 'nb-settings' ? ' active' : ''}" href="#/nb/${nb.id}/settings">⚙ Notebook settings</a></div>`;
   }
   function openSidebar() { el.sidebar.classList.add('open'); el.scrim.classList.add('visible'); }
   function closeSidebar() { el.sidebar.classList.remove('open'); el.scrim.classList.remove('visible'); }
@@ -351,7 +427,13 @@
     }
     renderAttachments();
   }
-  el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
+  let fileTarget = 'composer';
+  el.fileInput.addEventListener('change', () => {
+    const files = [...el.fileInput.files]; el.fileInput.value = '';
+    if (fileTarget === 'material') { const nb = route.nbId && findNb(route.nbId); if (nb && files[0]) uploadMaterial(nb, files[0]); }
+    else addFiles(files);
+    fileTarget = 'composer';
+  });
 
   function createChat({ notebookId = '', title = 'New conversation', lessonId = '' } = {}) {
     const chat = { id: uid(), notebookId, title, lessonId, createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
@@ -372,6 +454,7 @@
     box.insertAdjacentHTML('beforeend', messageHtml(m));
     const row = box.lastElementChild;
     if (animate) row.classList.add('msg-in');
+    if (m.role === 'assistant') hydrateDiagrams(row);
     const listen = row.querySelector('[data-action="listen"]');
     if (listen) listen.addEventListener('click', (e) => { e.stopPropagation(); toggleSpeech(m.text, listen); });
     const copy = row.querySelector('[data-action="copy-answer"]');
@@ -450,11 +533,32 @@
     const i = nb.plan.lessons.findIndex((l) => l.id === chat.lessonId);
     return i < 0 ? null : { lesson: nb.plan.lessons[i], index: i };
   }
+  function lessonBannerHtml(nb, chat) {
+    const lesson = lessonOf(nb, chat); if (!lesson) return '';
+    const l = lesson.lesson, st = lessonState(nb, l), next = nb.plan.lessons.find((x) => !x.done && x.id !== l.id);
+    const pct = st.state === 'done' ? 100 : Math.min(100, Math.round(st.n / st.target * 100));
+    const status = st.state === 'done' ? '✓ Lesson complete. Nice work!'
+      : st.ready ? (st.tutorReady ? 'Your tutor says you’re ready. Pass the quiz (70%+) to complete this lesson.' : 'You’ve put in the work. Pass the quiz (70%+) to complete this lesson.')
+      : `${st.n} of ${st.target} exchanges. Keep going: your tutor will tell you when you’re ready for the quiz.`;
+    const action = st.state === 'done' ? (next ? `<button type="button" class="btn btn-primary" data-action="start-lesson" data-id="${next.id}">Next lesson →</button>` : '')
+      : st.ready ? `<button type="button" class="btn btn-primary btn-glow" data-action="lesson-quiz" data-id="${l.id}">✦ Take the lesson quiz</button>`
+      : `<button type="button" class="btn btn-ghost" data-action="lesson-quiz" data-id="${l.id}" title="Practice anytime. The lesson completes once you're ready and pass.">Practice quiz</button>`;
+    return `<div class="lesson-banner ${st.state}"><div class="lesson-banner-main"><span class="eyebrow">Lesson ${lesson.index + 1} of ${nb.plan.lessons.length}</span><strong>${esc(l.title)}</strong>
+      <div class="lesson-meter"><div class="progress"><i style="width:${pct}%"></i></div><small>${status}</small></div></div>
+      <div class="lesson-banner-actions">${action}</div></div>`;
+  }
+  function refreshLessonBanner(chat) {
+    const old = $('.chat-view .lesson-banner'); if (!old) return;
+    const nb = findNb(chat.notebookId); const html = lessonBannerHtml(nb, chat); if (!html) return;
+    const wasReady = old.classList.contains('ready');
+    const oldWidth = old.querySelector('.progress i')?.style.width;
+    old.outerHTML = html;
+    const fresh = $('.chat-view .lesson-banner'), bar = fresh.querySelector('.progress i');
+    if (bar && oldWidth && !reduceMotion()) { const target = bar.style.width; bar.style.transition = 'none'; bar.style.width = oldWidth; void bar.offsetWidth; bar.style.transition = ''; bar.style.width = target; }
+    if (!wasReady && fresh.classList.contains('ready')) { fresh.classList.add('just-ready'); toast('You’re ready! Take the lesson quiz to complete this lesson.'); }
+  }
   function viewChat(chat, nb) {
-    const lesson = lessonOf(nb, chat);
-    const banner = lesson ? `<div class="lesson-banner"><div><span class="eyebrow">Lesson ${lesson.index + 1} of ${nb.plan.lessons.length}</span><strong>${esc(lesson.lesson.title)}</strong></div>
-      <div class="lesson-banner-actions"><button type="button" class="btn ${lesson.lesson.done ? 'btn-soft' : 'btn-primary'}" data-action="toggle-lesson" data-id="${lesson.lesson.id}">${lesson.lesson.done ? '✓ Completed' : 'Mark lesson complete'}</button>
-      <button type="button" class="btn btn-ghost" data-action="lesson-quiz" data-id="${lesson.lesson.id}">Quiz me on this</button></div></div>` : '';
+    const banner = lessonBannerHtml(nb, chat);
     const empty = !chat.messages.length && !(streaming && streaming.chatId === chat.id);
     el.view.innerHTML = `<div class="chat-view">${banner}
       <div id="messages" class="messages" role="log" aria-live="polite">${empty ? `<div class="chat-empty"><h2>${nb ? `${esc(nb.icon)} New ${esc(nb.name)} session` : 'New chat'}</h2><p>Ask anything to get started.</p></div>` : ''}</div>
@@ -492,7 +596,7 @@
       box.insertAdjacentHTML('beforeend', '<article class="message-row assistant live-row msg-in"><div class="message-avatar" aria-hidden="true">E</div><div class="message-content"><div class="message-author">EduCator</div><div class="message-bubble streaming"></div></div></article>');
       row = box.lastElementChild;
     }
-    row.querySelector('.message-bubble').innerHTML = streaming.text ? md(streaming.text) : '<span class="typing-indicator"><i></i><i></i><i></i></span>';
+    row.querySelector('.message-bubble').innerHTML = streaming.text ? md(stripReady(streaming.text)) : '<span class="typing-indicator"><i></i><i></i><i></i></span>';
     updateSpacer();
   }
 
@@ -502,7 +606,7 @@
     const nb = chat.notebookId ? findNb(chat.notebookId) : null;
     if (!chat.messages.length && chat.title === 'New conversation') chat.title = titleFrom(text || attachments[0]?.name || 'Attached question');
     const userMessage = { role: 'user', text: question, attachments };
-    chat.messages.push(userMessage); chat.updatedAt = Date.now();
+    chat.messages.push(userMessage); chat.updatedAt = Date.now(); logActivity();
     if (nb) { nb.lastStudiedAt = Date.now(); }
     save();
     if (route.view === 'chat' && route.chatId === chat.id) { $('#messages .chat-empty')?.remove(); appendMessage(userMessage); renderCrumbs(nb, chat, null); }
@@ -512,7 +616,7 @@
     let answer = null;
     try {
       const history = chat.messages.slice(-30).map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', text: m.text, attachments: (m.attachments || []).map((f) => ({ name: f.name, type: f.type, data: f.data, size: f.size })) }));
-      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history, stream: true, context: nb ? notebookContext(nb, chat) : '' }) });
+      const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history, stream: true, context: nb ? notebookContext(nb, chat) : styleLine() }) });
       if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || `The service returned an error (${response.status}).`); }
       const add = (t) => { streaming.text += t; if (!frame) frame = requestAnimationFrame(paintLive); };
       let failure = '';
@@ -525,7 +629,8 @@
         const data = await response.json().catch(() => ({})); if (typeof data.answer === 'string') add(data.answer);
       }
       if (!streaming.text.trim()) throw new Error(failure || 'No answer came back. Please try again.');
-      answer = { role: 'assistant', text: streaming.text.trim() + (failure ? `\n\n_${failure}_` : ''), attachments: [] };
+      if (streaming.text.includes(READY_TOKEN) && chat.lessonId) { chat.readyForQuiz = true; chat.readyAt = Date.now(); }
+      answer = { role: 'assistant', text: stripReady(streaming.text).trim() + (failure ? `\n\n_${failure}_` : ''), attachments: [] };
       chat.messages.push(answer);
     } catch (error) {
       answer = { role: 'assistant', error: true, text: error instanceof TypeError ? 'Could not reach the learning service. Check your connection and try again.' : error.message, attachments: [] };
@@ -535,7 +640,9 @@
       chat.updatedAt = Date.now(); save();
       if (route.view === 'chat' && route.chatId === chat.id) {
         $('#messages .live-row')?.remove(); $('#messages .scroll-spacer')?.remove(); appendMessage(answer); renderHintBar(chat); updateSpacer();
+        refreshLessonBanner(chat);
       }
+      if (nb) renderSidebar(nb, route.view === 'chat' ? chats.find((c) => c.id === route.chatId) : null);
       document.querySelectorAll('.send-button').forEach((b) => { b.disabled = false; });
     }
   }
@@ -566,7 +673,14 @@
       }
     }
     const lesson = lessonOf(nb, chat);
-    if (lesson) lines.push(`This session is Lesson ${lesson.index + 1}: "${lesson.lesson.title}". Summary: ${lesson.lesson.summary} Objectives: ${lesson.lesson.objectives.join('; ')}.${lesson.lesson.reason ? ` This lesson was adapted for them: ${lesson.lesson.reason}` : ''} Teach interactively: explain in small steps, use examples, check understanding with a question before moving on, and finish with a short recap.`);
+    if (lesson) {
+      const st = lessonState(nb, lesson.lesson);
+      lines.push(`This session is Lesson ${lesson.index + 1}: "${lesson.lesson.title}". Summary: ${lesson.lesson.summary} Objectives: ${lesson.lesson.objectives.join('; ')}.${lesson.lesson.reason ? ` This lesson was adapted for them: ${lesson.lesson.reason}` : ''} Teach interactively: explain in small steps, use examples, give practice questions, have them explain ideas back, and check understanding before moving on.
+Lesson completion: the learner completes this lesson by working through it with you and then passing a lesson quiz in the app. They have sent ${st.n} message${st.n === 1 ? '' : 's'} so far. Keep the lesson going until they have clearly shown they can do every objective; never declare them ready before at least ${READY_EXCHANGES} of their messages. When they are ready, give a short recap, tell them you recommend taking the lesson quiz now (there is a button for it), and put ${READY_TOKEN} alone on the last line.${st.tutorReady ? ' You already told them they are ready; keep helping with anything they ask and remind them to take the quiz.' : ''}`);
+    }
+    const mats = (nb.materials || []).map((m) => `- ${m.title}: ${oneLine(m.summary, 600)}`).join('\n');
+    if (mats) lines.push(`Their class materials (follow the class's terms, order, and emphasis):\n${mats}`);
+    if (styleLine()) lines.push(styleLine());
     return lines.join('\n').slice(0, 5800);
   }
 
@@ -593,8 +707,8 @@
     return out;
   }
 
-  async function generateJSON(prompt, context) {
-    const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', text: prompt }], format: 'json', context }) });
+  async function generateJSON(prompt, context, attachments = []) {
+    const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', text: prompt, ...(attachments.length ? { attachments } : {}) }], format: 'json', context }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `The service returned an error (${response.status}).`);
     let raw = String(data.answer || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
@@ -642,7 +756,10 @@
     if (isQuiz) {
       const { quiz, attempt } = event, lesson = nb.plan?.lessons.find((l) => l.id === quiz.lessonId);
       const earlier = quiz.attempts.slice(0, -1).map((a) => `${a.score}/${a.total}`).join(', ');
-      parts.push(`NEW EVENT: I finished ${isDiag ? 'a diagnostic quiz' : lesson ? `a quiz on the lesson "${lesson.title}"` : 'a review quiz'} ("${quiz.title}", ${(DIFFICULTIES[quiz.difficulty] || 'just right').toLowerCase()} difficulty). Score: ${attempt.score}/${attempt.total}${earlier ? ` (earlier attempts: ${earlier})` : ''}. Question by question:\n${diagnosticDetail(quiz, attempt)}`);
+      parts.push(`NEW EVENT: I finished ${isDiag ? 'a diagnostic quiz' : quiz.kind === 'final' ? 'my final check for this plan' : quiz.kind === 'review' ? 'a spaced-review warm-up of questions I missed before' : lesson ? `a quiz on the lesson "${lesson.title}"` : 'a review quiz'} ("${quiz.title}", ${(DIFFICULTIES[quiz.difficulty] || 'just right').toLowerCase()} difficulty). Score: ${attempt.score}/${attempt.total}${earlier ? ` (earlier attempts: ${earlier})` : ''}. Question by question:\n${diagnosticDetail(quiz, attempt)}`);
+      const session = lesson && lessonSession(nb, lesson.id);
+      if (session) parts.push(`Our lesson session for "${lesson.title}" (most recent part):\n${lessonTranscript(session)}`);
+      if (quiz.kind === 'final') { const first = diagnosticSummary(nb); if (first) parts.push(`For comparison, my first diagnostic: ${first.attempt.score}/${first.attempt.total}. ${first.assessment ? `Your take back then: ${first.assessment.headline}` : ''}`); }
     } else {
       parts.push(`NEW EVENT: I just finished Lesson ${event.index + 1}: "${event.lesson.title}" (objectives: ${event.lesson.objectives.join('; ')}). Here is the most recent part of our lesson session:\n${lessonTranscript(event.chat)}`);
     }
@@ -653,14 +770,14 @@
 - Be honest, specific, warm, and encouraging. Speak directly to me. Describe skills and concepts; do not just list questions. Use $...$ only for real math.`);
     const planShape = nb.plan ? `, "plan": {"changed": boolean, "note": string (1-2 sentences to me: what you changed and why, or why the plan still fits), "changes": [0-4 short strings, one per change], "upcoming": [every lesson I have NOT completed, in the new order: {"id": string (an existing id, or "new"), "title": string, "summary": string, "objectives": [3-4 strings], "minutes": number, "reason": string (why it was added or changed; "" if unchanged)}]}` : '';
     parts.push(`Return JSON with exactly this shape:
-{"headline": string (one sentence on where I am now), "summary": string (2-4 sentences of feedback on this ${isQuiz ? 'quiz' : 'lesson'}, compared with before)${isDiag ? ', "selfReport": "matches" | "partly" | "differs"' : ''}, "strengths": [1-3 strings], "gaps": [0-4 strings], "patterns": [0-3 strings]${nb.plan ? '' : ', "startingPoint": string (one sentence on where my learning plan should start)'}, "profile": {"level": string (one line on my current level), "summary": string (2-3 sentences, cumulative across everything so far), "strengths": [up to 5], "gaps": [up to 5, most important first], "patterns": [up to 4]}${planShape}}${nb.plan ? `
+{"headline": string (one sentence on where I am now), "summary": string (2-4 sentences of feedback on this ${isQuiz ? 'quiz' : 'lesson'}, compared with before)${isDiag ? ', "selfReport": "matches" | "partly" | "differs"' : ''}, "strengths": [1-3 strings], "gaps": [0-4 strings], "patterns": [0-3 strings]${nb.plan ? '' : ', "startingPoint": string (one sentence on where my learning plan should start)'}${isQuiz && event.quiz.lessonId && lessonSession(nb, event.quiz.lessonId) ? ', "recap": [3-5 key takeaways from this lesson, as short notes I can review later]' : ''}${isQuiz && event.quiz.kind === 'final' ? ', "comparison": string (2-3 sentences comparing where I am now with my first diagnostic)' : ''}, "profile": {"level": string (one line on my current level), "summary": string (2-3 sentences, cumulative across everything so far), "strengths": [up to 5], "gaps": [up to 5, most important first], "patterns": [up to 4]}${planShape}}${nb.plan ? `
 Plan rules: never include or change completed lessons. Adapt the not-started lessons to my current level: add a focused lesson or short review for a new or persistent gap, add objectives that target my mistake patterns, shorten or merge lessons on things I have clearly mastered, and reorder if that helps. Keep 3 to 10 upcoming lessons. If nothing needs to change, set "changed": false and return the upcoming lessons as they are.` : ''}`);
     return parts.join('\n\n');
   }
   function normalizeAssessment(d) {
     const headline = str(d?.headline, 220), summary = str(d?.summary, 1200);
     if (!headline && !summary) return null;
-    return { headline, summary, selfReport: ['matches', 'partly', 'differs'].includes(d?.selfReport) ? d.selfReport : '', strengths: listOf(d?.strengths, 3), gaps: listOf(d?.gaps, 4), patterns: listOf(d?.patterns, 3), startingPoint: str(d?.startingPoint, 300), at: Date.now() };
+    return { headline, summary, selfReport: ['matches', 'partly', 'differs'].includes(d?.selfReport) ? d.selfReport : '', strengths: listOf(d?.strengths, 3), gaps: listOf(d?.gaps, 4), patterns: listOf(d?.patterns, 3), startingPoint: str(d?.startingPoint, 300), recap: listOf(d?.recap, 5), comparison: str(d?.comparison, 700), at: Date.now() };
   }
   function normalizeAdapt(d, hasPlan) {
     const assessment = normalizeAssessment(d); if (!assessment) return null;
@@ -702,6 +819,8 @@ Plan rules: never include or change completed lessons. Adapt the not-started les
         if (plan) { assessment.planNote = plan.note; if (plan.changed) planChanged = applyPlanUpdate(nb, plan); assessment.planChanges = planChanged ? plan.changes : []; }
         assessment.planChanged = planChanged;
         if (event.type === 'quiz') event.attempt.assessment = assessment; else event.lesson.debrief = assessment;
+        const recapLesson = event.type === 'quiz' && event.quiz.lessonId && nb.plan?.lessons.find((l) => l.id === event.quiz.lessonId);
+        if (recapLesson && assessment.recap.length) recapLesson.recap = assessment.recap;
         if (profile) nb.profile = profile;
         const source = event.type === 'quiz' ? (event.quiz.kind === 'diagnostic' ? 'Diagnostic' : `Quiz · ${event.quiz.title}`) : `Lesson · ${event.lesson.title}`;
         (nb.updates ||= []).unshift({ id: uid(), at: Date.now(), source, headline: assessment.headline, planChanged, planNote: planChanged ? plan.note : '', href: event.type === 'quiz' ? `#/nb/${nb.id}/quiz/${event.quiz.id}` : `#/nb/${nb.id}/plan` });
@@ -763,6 +882,7 @@ Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
     const lesson = nb.plan?.lessons.find((l) => l.id === lessonId);
     const scope = kind === 'diagnostic'
       ? `a diagnostic quiz for "${nb.name}" at the ${gradeLabel(nb) || 'appropriate'} level that ranges from easy to hard, so we can find my real starting point${nb.struggles ? `. Include several questions on what I say I struggle with: ${nb.struggles}` : ''}`
+      : kind === 'final' ? `a final check for my notebook "${nb.name}" covering my whole learning plan (${(nb.plan?.lessons || []).map((l) => l.title).join('; ')}). Range from easy to hard like a diagnostic, so we can measure how far I've come since my first diagnostic`
       : lesson ? `a quiz on the lesson "${lesson.title}" (${lesson.summary} Objectives: ${lesson.objectives.join('; ')})`
       : `a review quiz covering my notebook "${nb.name}"${nb.plan ? ', focusing on completed lessons and the next lesson' : ''}`;
     return `Create ${scope}.
@@ -814,6 +934,8 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       <header class="page-hero"><div class="welcome-back"><span class="eyebrow">Your study space</span><span aria-hidden="true">✳</span></div><h1>What are we<br><em>figuring out</em> today?</h1>
         <p class="lead">Pick a subject to start a notebook, or ask your own question.</p></header>
       <div class="topic-grid">${Object.entries(TEMPLATES).map(([key, t]) => `<button type="button" class="topic-card topic-${t.tint}" data-action="template" data-key="${key}"><span class="topic-emoji">${t.glyph}</span><span class="topic-title">${t.title}</span><span class="topic-caption">${t.caption}</span><span class="topic-cta">Start a notebook →</span></button>`).join('')}</div>
+      ${(() => { const top = notebooks.map((n) => ({ n, r: coach(n)[0] })).filter((x) => x.r).sort((a, b) => b.r.p - a.r.p)[0];
+        return top ? `<section class="coach-card home-coach" style="--accent:${colorHex(top.n.color)}"><div class="coach-main"><span class="coach-icon" aria-hidden="true">${top.r.icon}</span><div class="coach-copy"><span class="eyebrow">Today I recommend · ${esc(top.n.icon)} ${esc(top.n.name)}</span><h3>${esc(top.r.title)}</h3><p>${mdInline(top.r.why)}</p></div>${recButton(top.r, 'btn-primary btn-lg')}</div></section>${streakCard()}` : ''; })()}
       ${composer('home', 'Ask anything you\'re curious about…', { big: true })}
       <div class="starter-row">${starters.map(([icon, label, prompt]) => `<button type="button" class="starter" data-action="starter" data-prompt="${esc(prompt)}"><span>${icon}</span>${label}</button>`).join('')}</div>
       <section class="home-section">
@@ -921,16 +1043,18 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
         <a class="btn btn-ghost" href="#/nb/${nb.id}/settings">Edit</a></header>
       <div class="stat-grid">
         <div class="stat tint-lilac"><span>Lessons</span><strong>${p.total ? `${p.done}<small>/${p.total}</small>` : '–'}</strong><div class="progress"><i style="width:${p.pct}%"></i></div></div>
-        <div class="stat tint-mint"><span>Quiz average</span><strong>${avg === null ? '–' : `${avg}<small>%</small>`}</strong><em>${plural(attempts.length, 'attempt')}</em></div>
+        <div class="stat tint-mint"><span>Quiz average</span><strong>${avg === null ? '–' : `${avg}<small>%</small>`}</strong><em>${plural(attempts.length, 'attempt')}</em>${sparkline(attempts.slice(0, 10).reverse().map((a) => a.score / a.total))}</div>
         <div class="stat tint-peach"><span>Sessions</span><strong>${sessions.length}</strong><em>chats in this notebook</em></div>
         <div class="stat tint-blue"><span>Last studied</span><strong class="stat-text">${timeAgo(nb.lastStudiedAt)}</strong></div>
       </div>
-      ${nextLessonCard(nb)}
+      ${jobs[`plan:${nb.id}`] || jobs[`quiz:${nb.id}`] || (!nb.plan && jobErrors[`plan:${nb.id}`]) ? nextLessonCard(nb) : coachCard(nb)}
+      ${streakCard()}
       ${profileCard(nb)}
-      <div class="action-grid">
-        <button type="button" class="action-card tint-lilac" data-action="quick-quiz"><span>✦</span><strong>Quiz me</strong><small>5 questions on what I've studied</small></button>
-        <button type="button" class="action-card tint-mint" data-action="diagnostic"><span>◎</span><strong>Diagnostic check</strong><small>Find my real starting level</small></button>
+      <div class="action-grid four">
+        <button type="button" class="action-card tint-lilac" data-action="quick-quiz"><span>✦</span><strong>Quiz me</strong><small>5 questions, adapted to your gaps</small></button>
+        <a class="action-card tint-mint" href="#/nb/${nb.id}/review"><span>🔁</span><strong>Review</strong><small>${dueMistakes(nb).length ? `${plural(dueMistakes(nb).length, 'question')} due now` : 'Warm-ups, mistakes, flashcards'}</small></a>
         <a class="action-card tint-peach" href="#/nb/${nb.id}/sessions"><span>✎</span><strong>Ask my tutor</strong><small>Open a free-form session</small></a>
+        <a class="action-card tint-blue" href="#/nb/${nb.id}/materials"><span>📎</span><strong>Class materials</strong><small>${(nb.materials || []).length ? `${plural(nb.materials.length, 'file')} in use` : 'Make it follow your class'}</small></a>
       </div>
       <div class="two-col">
         <section class="card"><div class="card-head"><h3>Recent sessions</h3><a href="#/nb/${nb.id}/sessions">All</a></div>
@@ -948,10 +1072,12 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     const list = (title, items, cls) => (items.length ? `<div class="assess-list ${cls}"><h4>${title}</h4><ul>${items.map((x) => `<li>${mdInline(x)}</li>`).join('')}</ul></div>` : '');
     return `<div class="assessment">
       <div class="assess-head"><span class="assess-avatar" aria-hidden="true">E</span><div><span class="eyebrow">Your tutor's take</span><strong>${mdInline(as.headline)}</strong></div></div>
-      ${as.selfReport ? `<span class="assess-badge ${as.selfReport}">${SELF_REPORT[as.selfReport]}</span>` : ''}
+      ${as.selfReport && quiz.kind === 'diagnostic' ? `<span class="assess-badge ${as.selfReport}">${SELF_REPORT[as.selfReport]}</span>` : ''}
       <div class="md assess-summary">${md(as.summary)}</div>
       <div class="assess-grid">${list('Already strong', as.strengths, 'good')}${list('Let’s work on', as.gaps, 'gap')}</div>
       ${list('Patterns I noticed', as.patterns, 'pattern')}
+      ${as.comparison ? `<p class="assess-start"><strong>Then vs. now:</strong> ${mdInline(as.comparison)}</p>` : ''}
+      ${list('Key takeaways from this lesson', as.recap || [], 'recap')}
       ${as.startingPoint ? `<p class="assess-start"><strong>Where we’ll start:</strong> ${mdInline(as.startingPoint)}</p>` : ''}
       ${as.planNote ? `<div class="assess-plan${as.planChanged ? ' changed' : ''}"><strong>${as.planChanged ? '🔄 I adapted your plan' : '✓ Your plan still fits'}</strong><p>${mdInline(as.planNote)}</p>
         ${as.planChanges?.length ? `<ul>${as.planChanges.map((c) => `<li>${mdInline(c)}</li>`).join('')}</ul>` : ''}${as.planChanged ? `<a class="btn btn-soft btn-sm" href="#/nb/${nb.id}/plan">See your updated plan →</a>` : ''}</div>` : ''}
@@ -969,6 +1095,18 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       ${updates.length ? `<div class="timeline"><h4>How your tutor has adapted</h4>${updates.map((u) => `<a class="timeline-row" href="${u.href}"><span class="tl-dot${u.planChanged ? ' changed' : ''}"></span><span class="tl-body"><strong>${esc(u.source)}</strong><span>${mdInline(u.headline)}</span>${u.planChanged ? `<em>🔄 Plan adapted: ${mdInline(u.planNote)}</em>` : ''}</span><small>${timeAgo(u.at)}</small></a>`).join('')}</div>` : ''}
     </section>`;
   }
+  function lessonOutcomeHtml(nb, quiz, attempt) {
+    const lesson = quiz.lessonId && nb.plan?.lessons.find((l) => l.id === quiz.lessonId); if (!lesson || !attempt.lessonOutcome) return '';
+    const i = nb.plan.lessons.indexOf(lesson), st = lessonState(nb, lesson), next = nb.plan.lessons.find((l) => !l.done);
+    if (attempt.lessonOutcome === 'completed') return `<div class="outcome done"><strong>🎉 Lesson ${i + 1} complete!</strong><p>You worked through it and passed the quiz.${next ? ` I recommend starting the next lesson while you’re on a roll.` : ' That was your last lesson. Time for your final check!'}</p>${next ? `<button type="button" class="btn btn-primary" data-action="start-lesson" data-id="${next.id}">Start Lesson ${nb.plan.lessons.indexOf(next) + 1} →</button>` : '<button type="button" class="btn btn-primary" data-action="final-check">Take the final check →</button>'}</div>`;
+    if (attempt.lessonOutcome === 'needs-session') return `<div class="outcome mid"><strong>Great score!</strong><p>To complete Lesson ${i + 1}, finish working through it with your tutor first: ${plural(st.need, 'more exchange')} to go. Then pass the quiz again.</p><button type="button" class="btn btn-primary" data-action="start-lesson" data-id="${lesson.id}">Continue the lesson →</button></div>`;
+    return `<div class="outcome low"><strong>Not quite there yet</strong><p>You need 70% to complete Lesson ${i + 1}. I recommend going over your mistakes with your tutor, then retaking the quiz.</p><button type="button" class="btn btn-primary" data-action="review-mistakes">Go over my mistakes →</button></div>`;
+  }
+  function beforeAfterHtml(nb, attempt) {
+    const first = diagnosticSummary(nb); if (!first) return '';
+    const b = Math.round(first.attempt.score / first.attempt.total * 100), a = Math.round(attempt.score / attempt.total * 100);
+    return `<div class="before-after"><div><small>First diagnostic</small><strong>${first.attempt.score}/${first.attempt.total}</strong><em>${b}%</em></div><span class="ba-arrow ${a >= b ? 'up' : 'down'}">${a >= b ? '↗' : '↘'}<b>${a >= b ? '+' : ''}${a - b} pts</b></span><div><small>Final check</small><strong>${attempt.score}/${attempt.total}</strong><em>${a}%</em></div></div>`;
+  }
   const scoreClass = (r) => (r >= 0.8 ? 'good' : r >= 0.5 ? 'ok' : 'low');
 
   function viewPlan(nb) {
@@ -981,22 +1119,25 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     const p = nbProgress(nb);
     el.view.innerHTML = `<div class="page narrow">
       <header class="page-hero"><span class="eyebrow">Learning plan · ${p.done} of ${p.total} complete</span><h1>${esc(nb.plan.title)}</h1>${nb.plan.overview ? `<div class="lead md">${md(nb.plan.overview)}</div>` : ''}
-        <div class="progress lg"><i style="width:${p.pct}%"></i></div>
+        ${lessonMap(nb)}
+        <p class="plan-rule">Each lesson completes after a real session with your tutor and a passed lesson quiz (70%+).</p>
         <div class="hero-actions"><button type="button" class="btn btn-ghost" data-action="regenerate-plan">↻ Regenerate plan</button></div></header>
       ${jobs[`adapt:${nb.id}`] ? '<div class="adapt-banner working"><span class="spinner sm"></span><div><strong>Your tutor is adapting this plan…</strong><p>Using your latest results. Lessons you haven’t started may change.</p></div></div>' : ''}
       ${(() => { const u = (nb.updates || []).find((x) => x.planChanged); return u && !jobs[`adapt:${nb.id}`] ? `<div class="adapt-banner"><span class="adapt-icon" aria-hidden="true">🔄</span><div><strong>Adapted ${timeAgo(u.at).toLowerCase()} after ${esc(u.source)}</strong><p>${mdInline(u.planNote)}</p></div></div>` : ''; })()}
       <ol class="lesson-list">${nb.plan.lessons.map((l, i) => {
-        const session = chats.find((c) => c.lessonId === l.id);
+        const session = chats.find((c) => c.lessonId === l.id), st = lessonState(nb, l);
+        const stateTag = st.state === 'learning' ? `<span class="state-tag learning">In progress · ${st.n}/${st.target}</span>` : st.state === 'ready' ? `<span class="state-tag ready">${st.last && st.lastRatio < PASS_RATIO ? 'Retake the quiz' : 'Ready for the quiz'}</span>` : '';
         const badge = !l.done && !session && l.badge ? `<span class="lesson-badge ${l.badge}">${l.badge === 'new' ? 'New for you' : 'Updated'}</span>` : '';
         return `<li class="lesson${l.done ? ' done' : ''}${badge ? ' adapted' : ''}">
-          <button type="button" class="lesson-check" data-action="toggle-lesson" data-id="${l.id}" aria-pressed="${l.done}" aria-label="${l.done ? 'Mark lesson as not done' : 'Mark lesson complete'}">${l.done ? '✓' : i + 1}</button>
-          <div class="lesson-body"><div class="lesson-meta"><span>Lesson ${i + 1}</span><span>~${l.minutes} min</span>${l.done ? '<span class="done-tag">Completed</span>' : ''}${badge}</div>
+          <span class="lesson-check" data-id="${l.id}" aria-label="${l.done ? 'Completed' : `Lesson ${i + 1}`}">${l.done ? '✓' : i + 1}</span>
+          <div class="lesson-body"><div class="lesson-meta"><span>Lesson ${i + 1}</span><span>~${l.minutes} min</span>${l.done ? '<span class="done-tag">Completed</span>' : ''}${stateTag}${badge}</div>
             <h3>${esc(l.title)}</h3><p>${esc(l.summary)}</p>
             ${!l.done && l.reason && badge ? `<p class="lesson-reason">↳ ${mdInline(l.reason)}</p>` : ''}
             ${l.done && jobs[`debrief:${l.id}`] ? '<p class="lesson-debrief working"><span class="spinner sm"></span> Your tutor is reviewing this lesson…</p>' : l.done && l.debrief ? `<p class="lesson-debrief"><strong>Tutor’s note:</strong> ${mdInline(l.debrief.headline)}</p>` : ''}
             ${l.objectives.length ? `<ul class="objectives">${l.objectives.map((o) => `<li>${mdInline(o)}</li>`).join('')}</ul>` : ''}
-            <div class="lesson-actions"><button type="button" class="btn ${l.done ? 'btn-soft' : 'btn-primary'}" data-action="start-lesson" data-id="${l.id}">${session ? (l.done ? 'Review lesson' : 'Continue lesson') : 'Start lesson'} →</button>
-              <button type="button" class="btn btn-ghost" data-action="lesson-quiz" data-id="${l.id}">Quiz me on this</button></div></div></li>`;
+            ${l.done && l.recap?.length ? `<details class="recap"><summary>Key takeaways</summary><ul>${l.recap.map((r) => `<li>${mdInline(r)}</li>`).join('')}</ul></details>` : ''}
+            <div class="lesson-actions">${st.state === 'ready' ? `<button type="button" class="btn btn-primary" data-action="lesson-quiz" data-id="${l.id}">✦ Take the lesson quiz</button><button type="button" class="btn btn-ghost" data-action="start-lesson" data-id="${l.id}">Back to the lesson</button>`
+              : `<button type="button" class="btn ${l.done ? 'btn-soft' : 'btn-primary'}" data-action="start-lesson" data-id="${l.id}">${session ? (l.done ? 'Review lesson' : 'Continue lesson') : 'Start lesson'} →</button><button type="button" class="btn btn-ghost" data-action="lesson-quiz" data-id="${l.id}">${l.done ? 'Quiz me again' : 'Practice quiz'}</button>`}</div></div></li>`;
       }).join('')}</ol></div>`;
   }
 
@@ -1009,7 +1150,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       <form class="card form quiz-gen" data-form="quiz">
         <h3>New quiz</h3>
         <div class="field-row three">
-          <div class="field"><label for="qScope">Topic</label><select id="qScope" name="scope"><option value="">Everything so far</option><option value="diagnostic">Diagnostic (find my level)</option>${lessons.map((l, i) => `<option value="${l.id}">Lesson ${i + 1}: ${esc(l.title)}</option>`).join('')}</select></div>
+          <div class="field"><label for="qScope">Topic</label><select id="qScope" name="scope"><option value="">Everything so far</option><option value="diagnostic">Diagnostic (find my level)</option>${nb.plan ? '<option value="final">Final check (measure my progress)</option>' : ''}${lessons.map((l, i) => `<option value="${l.id}">Lesson ${i + 1}: ${esc(l.title)}</option>`).join('')}</select></div>
           <div class="field"><label for="qCount">Questions</label><select id="qCount" name="count"><option>5</option><option selected>8</option><option>10</option></select></div>
           <div class="field"><label for="qDiff">Difficulty</label><select id="qDiff" name="difficulty">${Object.entries(DIFFICULTIES).map(([k, v]) => `<option value="${k}"${k === 'matched' ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
         </div>
@@ -1021,7 +1162,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
         const lesson = lessons.find((l) => l.id === q.lessonId);
         return `<div class="quiz-row"><a href="#/nb/${nb.id}/quiz/${q.id}" class="quiz-row-main">
           <span class="score-dot ${best === null ? 'none' : scoreClass(best)}">${best === null ? '–' : `${Math.round(best * 100)}%`}</span>
-          <span><strong>${esc(q.title)}</strong><small>${plural(q.questions.length, 'question')} · ${q.kind === 'diagnostic' ? 'Diagnostic' : lesson ? esc(lesson.title) : 'Review'} · ${q.progress ? 'In progress' : plural(q.attempts.length, 'attempt')} · ${timeAgo(q.createdAt)}</small></span></a>
+          <span><strong>${esc(q.title)}</strong><small>${plural(q.questions.length, 'question')} · ${QUIZ_KIND[q.kind] || (lesson ? esc(lesson.title) : 'Review quiz')} · ${q.progress ? 'In progress' : plural(q.attempts.length, 'attempt')} · ${timeAgo(q.createdAt)}</small></span></a>
           <button type="button" class="sb-icon danger" data-action="delete-quiz" data-id="${q.id}" aria-label="Delete quiz" title="Delete quiz">×</button></div>`;
       }).join('') || '<p class="muted center">No quizzes yet. Generate one above.</p>'}</div></div>`;
   }
@@ -1070,16 +1211,253 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     el.view.innerHTML = `<div class="page narrow quiz-page">
       <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">${plural(quiz.attempts.length, 'attempt')}</span></div>
       <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score" data-score="${a.score}">${a.score}<small>/${a.total}</small></div>${confNote}
+        ${lessonOutcomeHtml(nb, quiz, a)}
+        ${quiz.kind === 'final' ? beforeAfterHtml(nb, a) : ''}
         ${assessmentHtml(nb, quiz, a)}
         <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? '' : 'Next, let’s turn this into a plan made for you.') : a.assessment || assessing ? '' : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
-        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
+        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}${quiz.kind === 'review' ? '' : '<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button>'}</div></div>
+      ${!assessing ? (() => { const r = coach(nb).filter((x) => !(x.btn.href || '').endsWith(quiz.id))[0]; return r ? `<section class="next-step"><span class="coach-icon" aria-hidden="true">${r.icon}</span><div><span class="eyebrow">I recommend next</span><strong>${esc(r.title)}</strong><small>${mdInline(r.why)}</small></div>${recButton(r)}</section>` : ''; })() : ''}
       <h2 class="section-title">Review</h2>
       <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div>${confs[i] ? `<span class="conf-tag conf-${confs[i]}">${CONFIDENCE[confs[i]]}</span>` : ''}</div>
         ${ok ? '' : `<p><span class="label">Your answer</span> ${mdInline(q.choices[a.answers[i]] ?? '–')}</p>`}<p><span class="label">Correct answer</span> ${mdInline(q.choices[q.answer])}</p>${q.explanation ? `<div class="md muted-md">${md(q.explanation)}</div>` : ''}</li>`; }).join('')}</ol></div>`;
   }
 
+  // ---------- Finishing a quiz ----------
+  function finishQuiz(nb, quiz) {
+    const pr = quiz.progress, answers = pr.answers;
+    const attempt = { at: Date.now(), answers, confidence: pr.confidence || [], total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length };
+    quiz.attempts.push(attempt); quiz.progress = null;
+    if (quiz.kind === 'review') updateMistakesFromReview(nb, quiz, attempt); else recordMistakes(nb, quiz, attempt);
+    const lesson = quiz.lessonId && nb.plan?.lessons.find((l) => l.id === quiz.lessonId);
+    if (lesson && !lesson.done) {
+      const passed = attempt.score / attempt.total >= PASS_RATIO, st = lessonState(nb, lesson);
+      if (passed && st.ready) { lesson.done = true; lesson.doneAt = Date.now(); attempt.lessonOutcome = 'completed'; flash = { type: 'lesson', id: lesson.id }; }
+      else attempt.lessonOutcome = passed ? 'needs-session' : 'retry';
+    }
+    if (quiz.kind === 'final') nb.finalAt = Date.now();
+    nb.lastStudiedAt = Date.now(); logActivity(); save(); render(true);
+    adaptAfter(nb, { type: 'quiz', quiz, attempt });
+  }
+  function startWarmup(nb, all = false) {
+    const pool = (all ? activeMistakes(nb) : dueMistakes(nb)).slice(0, 6);
+    if (!pool.length) { toast('Nothing is due for review right now. Nice!'); return; }
+    const quiz = { id: uid(), title: all ? 'Mistake practice' : 'Warm-up review', kind: 'review', lessonId: '', difficulty: 'matched', createdAt: Date.now(), questions: pool.map((m) => ({ ...m.q })), mistakeIds: pool.map((m) => m.id), attempts: [], progress: { answers: [], confidence: [], revealed: false } };
+    nb.quizzes.unshift(quiz); save(); go(`#/nb/${nb.id}/quiz/${quiz.id}`);
+  }
+  const QUIZ_KIND = { diagnostic: 'Diagnostic', final: 'Final check', review: 'Warm-up review' };
+
+  // ---------- Coach: recommend (not just offer) the next step ----------
+  function coach(nb) {
+    const recs = [], add = (p, icon, title, why, btn) => recs.push({ p, icon, title, why, btn: { nb: nb.id, ...btn } });
+    const due = dueMistakes(nb).length;
+    if (!nb.plan) {
+      const diag = diagnosticOf(nb);
+      if (!diag) add(100, '◎', 'Take your diagnostic', '8 quick questions so your tutor knows exactly where to start. Everything else builds on it.', { action: 'diagnostic', label: 'Start diagnostic' });
+      else if (diagnosticSummary(nb)) add(100, '✦', 'Build your learning plan', 'Your diagnostic is done. Your plan will start right where you are.', { action: 'generate-plan', label: 'Build my plan' });
+      else add(100, '◎', 'Finish your diagnostic', 'You’re partway through. Finish it so your plan starts in the right place.', { href: `#/nb/${nb.id}/quiz/${diag.id}`, label: 'Continue' });
+    }
+    if (due) add(97, '🔁', `Do your warm-up (${plural(due, 'question')} due)`, 'These are questions you missed before. Reviewing them right when they’re due is how they stick for good.', { action: 'warmup', label: 'Start warm-up' });
+    if (nb.plan) {
+      const lessons = nb.plan.lessons, idx = lessons.findIndex((l) => !l.done);
+      if (idx < 0) { if (!nb.finalAt) add(99, '🏁', 'Take your final check', 'You finished every lesson. A final check shows how far you’ve come since your diagnostic.', { action: 'final-check', label: 'Start final check' }); }
+      else {
+        const l = lessons[idx], st = lessonState(nb, l), name = `Lesson ${idx + 1}: ${l.title}`;
+        if (st.last && st.lastRatio < PASS_RATIO && st.last.a.at > (st.session?.updatedAt || 0)) add(96, '↺', `Go over ${name} again`, `Your last lesson quiz scored ${st.last.a.score}/${st.last.a.total}. Review the mistakes with your tutor, then retake it. You need 70% to complete the lesson.`, { href: `#/nb/${nb.id}/quiz/${st.last.q.id}`, label: 'Review my mistakes' });
+        else if (st.state === 'ready') add(95, '✦', `Take the quiz for ${name}`, `You’ve worked through this lesson${st.tutorReady ? ' and your tutor says you’re ready' : ''}. Pass the quiz (70%+) to complete it.`, { action: 'lesson-quiz', id: l.id, label: 'Take the lesson quiz' });
+        else if (st.state === 'learning') add(90, '✎', `Continue ${name}`, `${plural(st.need, 'more exchange')} with your tutor before the lesson quiz. Ask questions, try the practice problems, and explain things back.`, { action: 'start-lesson', id: l.id, label: 'Continue lesson' });
+        else add(85, '→', `Start ${name}`, l.reason ? `Adapted for you: ${l.reason}` : (l.summary || 'Your next lesson is ready.'), { action: 'start-lesson', id: l.id, label: 'Start lesson' });
+      }
+      const lastQuizAt = Math.max(0, ...nb.quizzes.flatMap((q) => q.attempts.map((a) => a.at)));
+      const doneCount = lessons.filter((l) => l.done).length;
+      if (doneCount && Date.now() - lastQuizAt > 5 * DAY) add(70, '✦', 'Take a quick review quiz', `Your last quiz was ${lastQuizAt ? timeAgo(lastQuizAt).toLowerCase() : 'a while ago'}. A short one keeps earlier lessons fresh.`, { action: 'quick-quiz', label: 'Quiz me' });
+      if (doneCount >= 2 && !(nb.decks || []).length) add(60, '🃏', 'Make flashcards from what you’ve learned', 'A quick deck from your completed lessons for spare minutes, with extra cards on your gaps.', { action: 'make-deck', label: 'Make flashcards' });
+      if (!(nb.materials || []).length) add(40, '📎', 'Add your class materials', 'Upload a syllabus, notes, or a study guide, and your tutor will follow your actual class.', { href: `#/nb/${nb.id}/materials`, label: 'Add materials' });
+      if ((nb.updates || []).length >= 4 && (!nb.report || Date.now() - nb.report.at > 7 * DAY)) add(30, '📄', 'Share a progress report', 'A one-page summary for you, a parent, or a teacher.', { href: `#/nb/${nb.id}/report`, label: 'Open report' });
+    }
+    return recs.sort((a, b) => b.p - a.p);
+  }
+  function recButton(r, cls = 'btn-primary') {
+    const b = r.btn;
+    return b.href ? `<a class="btn ${cls}" href="${b.href}">${esc(b.label)} →</a>` : `<button type="button" class="btn ${cls}" data-action="${b.action}" data-nb="${b.nb}"${b.id ? ` data-id="${b.id}"` : ''}>${esc(b.label)} →</button>`;
+  }
+  function coachCard(nb, { eyebrow = 'Your next step · I recommend' } = {}) {
+    const recs = coach(nb); if (!recs.length) return '';
+    const [top, ...rest] = recs;
+    return `<section class="coach-card"><div class="coach-main"><span class="coach-icon" aria-hidden="true">${top.icon}</span><div class="coach-copy"><span class="eyebrow">${eyebrow}</span><h3>${esc(top.title)}</h3><p>${mdInline(top.why)}</p></div>${recButton(top, 'btn-primary btn-lg')}</div>
+      ${rest.length ? `<div class="coach-more"><span class="coach-more-label">Also worth doing</span>${rest.slice(0, 2).map((r) => `<div class="coach-row"><span aria-hidden="true">${r.icon}</span><div><strong>${esc(r.title)}</strong><small>${mdInline(r.why)}</small></div>${recButton(r, 'btn-ghost btn-sm')}</div>`).join('')}</div>` : ''}</section>`;
+  }
+  function streakCard() {
+    const s = streakInfo();
+    const msg = s.studiedToday ? (s.days >= s.goal ? 'Weekly goal reached. Amazing consistency!' : `${s.goal - s.days} more day${s.goal - s.days === 1 ? '' : 's'} to hit your weekly goal.`) : s.streak ? `Study today to keep your ${s.streak}-day streak going.` : 'Study today to start a streak.';
+    return `<div class="streak-card"><div class="streak-flame${s.studiedToday ? ' lit' : ''}" aria-hidden="true">🔥</div><div class="streak-copy"><strong>${s.streak ? `${s.streak}-day streak` : 'No streak yet'}</strong><small>${msg}</small></div>
+      <div class="week-dots" aria-label="${s.days} of ${s.goal} study days this week">${s.week.map((d) => `<span class="wd${d.done ? ' done' : ''}${d.today ? ' today' : ''}${d.future ? ' future' : ''}"><i></i>${d.label}</span>`).join('')}<em>${s.days}/${s.goal}</em></div></div>`;
+  }
+  function sparkline(values) {
+    if (values.length < 2) return '';
+    const w = 120, h = 34, pts = values.map((v, i) => [i / (values.length - 1) * (w - 6) + 3, h - 4 - v * (h - 8)]);
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts.map((p) => p.map((n) => n.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="3.5" fill="currentColor"/></svg>`;
+  }
+  function lessonMap(nb) {
+    const lessons = nb.plan.lessons, cur = lessons.findIndex((l) => !l.done);
+    return `<div class="lesson-map" aria-label="Lesson progress">${lessons.map((l, i) => `<span class="lm-node${l.done ? ' done' : i === cur ? ' current' : ''}" title="Lesson ${i + 1}: ${esc(l.title)}">${l.done ? '✓' : i + 1}</span>`).join('<i class="lm-link"></i>')}</div>`;
+  }
+
+  // ---------- Flashcards ----------
+  async function generateDeck(nb) {
+    const key = `deck:${nb.id}`; if (jobs[key]) return;
+    jobs[key] = true; delete jobErrors[key];
+    if (!(route.nbId === nb.id && route.view === 'nb-review')) go(`#/nb/${nb.id}/review`); else render(true);
+    const done = (nb.plan?.lessons || []).filter((l) => l.done);
+    const prompt = `Make a flashcard deck for my notebook "${nb.name}" (${gradeLabel(nb) || 'my level'}) from what I've learned so far.
+${done.length ? `Lessons I've completed:\n${done.map((l) => `- ${l.title}: ${l.objectives.join('; ')}${l.recap?.length ? ` | key takeaways: ${l.recap.join('; ')}` : ''}`).join('\n')}` : `Topic: ${nb.name}. What I'm working on: ${nb.struggles || nb.goal || 'the basics'}.`}
+${nb.profile?.gaps.length ? `My current gaps: ${nb.profile.gaps.join('; ')}` : ''}
+Return JSON with exactly this shape: {"title": string (short), "cards": [{"front": string (a short question, term, or quick problem), "back": string (the answer or explanation, 1-3 sentences)}]}
+Make 10 to 14 cards. Mix definitions, "why" questions, and quick problems. Put extra cards on my gaps. A front must never give away its back.`;
+    try {
+      const d = await generateJSON(prompt, notebookContext(nb));
+      const cards = (Array.isArray(d?.cards) ? d.cards : []).map((c) => ({ id: uid(), front: str(c?.front, 300), back: str(c?.back, 600), known: false })).filter((c) => c.front && c.back).slice(0, 20);
+      if (cards.length < 3) throw new Error('The flashcards came back incomplete. Please try again.');
+      const deck = { id: uid(), title: str(d.title, 80) || `${nb.name} flashcards`, createdAt: Date.now(), cards, studied: 0 };
+      (nb.decks ||= []).unshift(deck); save(); delete jobs[key];
+      if (route.nbId === nb.id && route.view === 'nb-review') go(`#/nb/${nb.id}/cards/${deck.id}`); else { toast(`Your flashcards are ready: ${deck.title}`); refreshIf(nb.id); }
+    } catch (e) { delete jobs[key]; jobErrors[key] = e.message; toast(e.message); refreshIf(nb.id); }
+  }
+  let cardState = { deckId: '', order: [], i: 0, flipped: false, known: 0, learning: 0 };
+  function viewCards(nb, deck) {
+    if (cardState.deckId !== deck.id || cardState.restart) {
+      const pool = cardState.restart === 'learning' ? deck.cards.filter((c) => !c.known) : deck.cards;
+      cardState = { deckId: deck.id, order: (pool.length ? pool : deck.cards).map((c) => c.id), i: 0, flipped: false, known: 0, learning: 0 };
+    }
+    const cs = cardState, total = cs.order.length;
+    if (cs.i >= total) {
+      el.view.innerHTML = `<div class="page narrow"><div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/review">← Review</a></div>
+        <div class="card result-card good"><span class="eyebrow">${esc(deck.title)}</span><div class="result-score" data-score="${cs.known}">${cs.known}<small>/${total}</small></div><p class="lead">${cs.learning ? `${plural(cs.learning, 'card')} to practice again. I recommend going through them once more now, while they’re fresh.` : 'You knew every card. Excellent!'}</p>
+        <div class="form-actions center">${cs.learning ? '<button type="button" class="btn btn-primary btn-lg" data-action="cards-again" data-mode="learning">Study the tricky ones again</button>' : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="cards-again" data-mode="all">↻ Whole deck</button></div></div></div>`;
+      return;
+    }
+    const card = deck.cards.find((c) => c.id === cs.order[cs.i]);
+    el.view.innerHTML = `<div class="page narrow flash-page"><div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/review">← Review</a><span class="muted">Card ${cs.i + 1} of ${total} · ${cs.known} known</span></div>
+      <div class="progress lg"><i style="width:${Math.round(cs.i / total * 100)}%"></i></div>
+      <button type="button" class="flashcard${cs.flipped ? ' flipped' : ''}" data-action="flip" data-step="${cs.i}" aria-label="Flip card"><span class="fc-inner"><span class="fc-face fc-front"><small>Question</small><span class="md">${md(card.front)}</span><em>Tap or press Space to flip</em></span><span class="fc-face fc-back"><small>Answer</small><span class="md">${md(card.back)}</span></span></span></button>
+      <div class="flash-actions${cs.flipped ? ' show' : ''}"><button type="button" class="btn btn-ghost btn-lg" data-action="card-learning"${cs.flipped ? '' : ' disabled'}>Still learning <kbd>1</kbd></button><button type="button" class="btn btn-primary btn-lg" data-action="card-known"${cs.flipped ? '' : ' disabled'}>Got it <kbd>2</kbd></button></div></div>`;
+  }
+
+  // ---------- Review tab: warm-ups, mistake log, flashcards ----------
+  function viewReview(nb) {
+    const due = dueMistakes(nb), active = activeMistakes(nb), mastered = (nb.mistakes || []).filter((m) => m.mastered), decks = nb.decks || [];
+    const status = (m) => m.mastered ? '<span class="m-status mastered">✓ Mastered</span>' : m.dueAt <= Date.now() ? '<span class="m-status due">Due now</span>' : `<span class="m-status later">Next review ${new Date(m.dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>`;
+    const boxes = (m) => `<span class="m-boxes" title="Review streak">${REVIEW_INTERVALS.map((_, i) => `<i class="${i < m.box || m.mastered ? 'on' : ''}"></i>`).join('')}</span>`;
+    el.view.innerHTML = `<div class="page narrow">
+      <header class="page-hero"><span class="eyebrow">Review</span><h1>Make it <em>stick</em></h1><p class="lead">Everything you miss comes back for review after 1, 3, 7, and 14 days. Get it right each time and it’s mastered.</p></header>
+      <section class="warmup-card ${due.length ? 'due' : ''}"><div><span class="eyebrow">${due.length ? 'Recommended now' : 'Spaced review'}</span><h3>${due.length ? `${plural(due.length, 'question')} ready for your warm-up` : active.length ? 'You’re all caught up' : 'No mistakes to review yet'}</h3>
+        <p>${due.length ? 'About 5 minutes. Do it now, before you start anything new.' : active.length ? `${plural(active.length, 'question')} scheduled for later. Come back when they’re due.` : 'Take a quiz and anything you miss will show up here.'}</p></div>
+        <div class="warmup-actions">${due.length ? '<button type="button" class="btn btn-primary btn-lg" data-action="warmup">Start warm-up →</button>' : ''}${active.length && !due.length ? '<button type="button" class="btn btn-ghost" data-action="warmup-all">Practice them anyway</button>' : ''}</div></section>
+      ${nb.profile?.patterns.length ? `<section class="card watch-card"><div class="card-head"><h3>Things to watch for</h3></div><div>${nb.profile.patterns.map((p) => `<span class="chip pattern">${mdInline(p)}</span>`).join('')}</div></section>` : ''}
+      <section class="card"><div class="card-head"><h3>🃏 Flashcards</h3><button type="button" class="btn btn-soft btn-sm" data-action="make-deck"${jobs[`deck:${nb.id}`] ? ' disabled' : ''}>${jobs[`deck:${nb.id}`] ? '<span class="spinner sm"></span> Making cards…' : '＋ New deck'}</button></div>
+        ${jobErrors[`deck:${nb.id}`] ? `<p class="error-text">${esc(jobErrors[`deck:${nb.id}`])}</p>` : ''}
+        ${decks.map((d) => { const k = d.cards.filter((c) => c.known).length; return `<div class="deck-row"><a class="list-row" href="#/nb/${nb.id}/cards/${d.id}"><span>🃏</span><span class="list-title">${esc(d.title)}</span><small>${k}/${d.cards.length} known · ${timeAgo(d.createdAt)}</small></a><button type="button" class="sb-icon danger" data-action="delete-deck" data-id="${d.id}" aria-label="Delete deck">×</button></div>`; }).join('') || '<p class="muted">Make a deck from your completed lessons. It’s great for spare minutes.</p>'}</section>
+      <section class="card"><div class="card-head"><h3>Mistake log</h3><span class="muted small">${active.length} active · ${mastered.length} mastered</span></div>
+        ${(nb.mistakes || []).length ? `<ol class="mistake-list">${(nb.mistakes || []).slice(0, 40).map((m) => `<li class="mistake${m.mastered ? ' mastered' : ''}"><div class="mistake-top">${status(m)}${boxes(m)}<small>${esc(m.source || '')}</small></div><div class="md">${md(m.q.question)}</div>
+          <p class="small">${m.lucky ? '<span class="label">Guessed right</span>' : `<span class="label">You answered</span> ${mdInline(m.q.choices[m.myAnswer] ?? '–')}`}</p></li>`).join('')}</ol>` : '<p class="muted">Nothing here yet.</p>'}</section></div>`;
+  }
+
+  // ---------- Class materials ----------
+  async function uploadMaterial(nb, file) {
+    let data; try { data = await readFile(file); } catch (e) { toast(e.message); return; }
+    const key = `material:${nb.id}`; if (jobs[key]) { toast('Already reading a file. One moment.'); return; }
+    jobs[key] = file.name; delete jobErrors[key]; refreshIf(nb.id);
+    const prompt = `I'm uploading class material ("${file.name}") for my notebook "${nb.name}" (${gradeLabel(nb) || 'my level'}). Read it carefully and turn it into study notes my tutor can use in every session.
+Return JSON with exactly this shape: {"title": string (short name for this material), "summary": string (Markdown study notes, at most about 1200 characters: what it covers, key terms and definitions, formulas or rules, the order topics are taught in, and what the teacher seems to emphasize), "topics": [3-8 short strings]}`;
+    try {
+      const d = await generateJSON(prompt, '', [{ name: data.name, type: data.type, data: data.data, size: data.size }]);
+      const summary = str(d?.summary, 1800); if (!summary) throw new Error('Your tutor could not read that file. Try a clearer photo, a PDF, or a text file.');
+      (nb.materials ||= []).unshift({ id: uid(), name: file.name, type: file.type, title: str(d.title, 100) || file.name, summary, topics: listOf(d.topics, 8, 80), at: Date.now() });
+      nb.updatedAt = Date.now(); save(); toast('Got it. Your tutor will use this material from now on.');
+    } catch (e) { jobErrors[key] = e.message; toast(e.message); }
+    finally { delete jobs[key]; refreshIf(nb.id); }
+  }
+  function viewMaterials(nb) {
+    const key = `material:${nb.id}`, mats = nb.materials || [];
+    el.view.innerHTML = `<div class="page narrow">
+      <header class="page-hero"><span class="eyebrow">Class materials</span><h1>Teach it <em>your class’s</em> way</h1><p class="lead">Upload a syllabus, class notes, slides, or a study guide (photo, PDF, or text, up to 1 MB). Your tutor turns it into study notes and follows your class’s terms, order, and emphasis in every session, quiz, and plan update.</p></header>
+      <div class="upload-zone${jobs[key] ? ' working' : ''}">${jobs[key] ? `<span class="spinner"></span><div><strong>Reading ${esc(jobs[key])}…</strong><p>This usually takes 10–30 seconds.</p></div>` : '<span class="upload-icon" aria-hidden="true">📎</span><div><strong>Add class material</strong><p>Images, PDFs, or text files.</p></div><button type="button" class="btn btn-primary" data-action="upload-material">Choose a file</button>'}</div>
+      ${jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : ''}
+      ${mats.length && nb.plan ? '<div class="adapt-banner"><span class="adapt-icon">💡</span><div><strong>I recommend rebuilding your plan around your class</strong><p>Your tutor already uses these notes, but a fresh plan will follow your class’s order. Completed lessons keep their status.</p><button type="button" class="btn btn-soft btn-sm" data-action="regenerate-plan">Rebuild my plan</button></div></div>' : ''}
+      <div class="materials">${mats.map((m) => `<details class="material card"><summary><span class="mat-icon">${m.type.startsWith('image/') ? '🖼' : m.type === 'application/pdf' ? '📕' : '📄'}</span><span><strong>${esc(m.title)}</strong><small>${esc(m.name)} · ${timeAgo(m.at)}</small></span><button type="button" class="sb-icon danger" data-action="delete-material" data-id="${m.id}" aria-label="Remove material">×</button></summary>
+        ${m.topics.length ? `<div class="mat-topics">${m.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}<div class="md">${md(m.summary)}</div></details>`).join('')}</div></div>`;
+  }
+
+  // ---------- Progress report ----------
+  async function generateReport(nb) {
+    const key = `report:${nb.id}`; if (jobs[key]) return;
+    jobs[key] = true; delete jobErrors[key]; refreshIf(nb.id);
+    const p = nbProgress(nb), { attempts, avg } = quizStats(nb), s = streakInfo(), a = activity();
+    const days14 = [...Array(14)].filter((_, i) => a[dayKey(Date.now() - i * DAY)]).length;
+    const first = diagnosticSummary(nb), finalQ = nb.quizzes.find((q) => q.kind === 'final' && q.attempts.length);
+    const facts = [`Notebook: ${nb.name}. Grade/level: ${gradeLabel(nb) || 'not given'}. Goal: ${nb.goal || 'not given'}. Said they struggle with: ${nb.struggles || 'not given'}.`,
+      `Started: ${new Date(nb.createdAt).toLocaleDateString()}. Study days in the last 14 days: ${days14}. Current streak: ${s.streak} days.`,
+      nb.plan ? `Lessons completed: ${p.done}/${p.total}${p.done ? ` (${nb.plan.lessons.filter((l) => l.done).map((l) => l.title).join('; ')})` : ''}. Next: ${nb.plan.lessons.find((l) => !l.done)?.title || 'plan complete'}.` : 'No learning plan yet.',
+      `Quizzes taken: ${attempts.length}${avg !== null ? `, average ${avg}%` : ''}. Recent: ${attempts.slice(0, 6).map((x) => `${x.quiz.title} ${x.score}/${x.total}`).join('; ') || 'none'}.`,
+      first ? `First diagnostic: ${first.attempt.score}/${first.attempt.total}.` : '', finalQ ? `Final check: ${finalQ.attempts.at(-1).score}/${finalQ.attempts.at(-1).total}.` : '',
+      `Mistakes reviewed and mastered: ${(nb.mistakes || []).filter((m) => m.mastered).length}; still practicing: ${activeMistakes(nb).length}.`,
+      nb.profile ? `Tutor's current picture of the learner:\n${profileText(nb.profile)}` : ''].filter(Boolean).join('\n');
+    try {
+      const d = await generateJSON(`Write a short progress report for this notebook that the learner can share with a parent or teacher.\n\nFacts (use only these):\n${facts}\n\nReturn JSON with exactly this shape: {"title": string, "summary": string (3-4 plain-language sentences), "highlights": [2-4 strings], "strengths": [1-4 strings], "focus": [1-4 strings: areas to keep working on], "nextSteps": [2-4 concrete recommendations for the learner], "forSupporters": string (2-3 sentences on how a parent or teacher can help)}\nBe honest, specific, and encouraging.`, '');
+      const summary = str(d?.summary, 1200); if (!summary) throw new Error('The report came back incomplete. Please try again.');
+      nb.report = { at: Date.now(), title: str(d.title, 120) || `${nb.name} progress report`, summary, highlights: listOf(d.highlights, 4), strengths: listOf(d.strengths, 4), focus: listOf(d.focus, 4), nextSteps: listOf(d.nextSteps, 4), forSupporters: str(d.forSupporters, 700), stats: { done: p.done, total: p.total, avg, quizzes: attempts.length, days14, streak: s.streak } };
+      save();
+    } catch (e) { jobErrors[key] = e.message; toast(e.message); }
+    finally { delete jobs[key]; refreshIf(nb.id); }
+  }
+  function reportText(nb, r) {
+    const sec = (t, items) => (items.length ? `\n${t}:\n${items.map((x) => `• ${x}`).join('\n')}` : '');
+    return `${r.title}\n${new Date(r.at).toLocaleDateString()}\n\n${r.summary}${sec('Highlights', r.highlights)}${sec('Strengths', r.strengths)}${sec('Keep working on', r.focus)}${sec('Next steps', r.nextSteps)}${r.forSupporters ? `\n\nHow you can help:\n${r.forSupporters}` : ''}`;
+  }
+  function viewReport(nb) {
+    const key = `report:${nb.id}`, r = nb.report;
+    const list = (t, items, cls) => (items?.length ? `<div class="rep-sec ${cls}"><h4>${t}</h4><ul>${items.map((x) => `<li>${mdInline(x)}</li>`).join('')}</ul></div>` : '');
+    el.view.innerHTML = `<div class="page narrow">
+      <header class="page-hero no-print"><span class="eyebrow">Progress report</span><h1>Share your <em>progress</em></h1><p class="lead">A one-page summary for you, a parent, or a teacher. Print it, save it as a PDF, or copy the text.</p>
+        <div class="hero-actions"><button type="button" class="btn ${r ? 'btn-ghost' : 'btn-primary btn-lg'}" data-action="make-report"${jobs[key] ? ' disabled' : ''}>${jobs[key] ? '<span class="spinner sm"></span> Writing your report…' : r ? '↻ Write a new report' : '✦ Write my report'}</button>${r ? '<button type="button" class="btn btn-ghost" data-action="print-report">🖨 Print / PDF</button><button type="button" class="btn btn-ghost" data-action="copy-report">Copy text</button>' : ''}</div></header>
+      ${r ? `<article class="report card"><div class="rep-head"><div><span class="eyebrow">${esc(nb.icon)} ${esc(nb.name)} · ${new Date(r.at).toLocaleDateString()}</span><h2>${esc(r.title)}</h2></div><span class="brand-mark" aria-hidden="true">E</span></div>
+        <div class="rep-stats"><div><strong>${r.stats.total ? `${r.stats.done}/${r.stats.total}` : '–'}</strong><small>lessons</small></div><div><strong>${r.stats.avg ?? '–'}${r.stats.avg !== null && r.stats.avg !== undefined ? '%' : ''}</strong><small>quiz average</small></div><div><strong>${r.stats.quizzes}</strong><small>quizzes</small></div><div><strong>${r.stats.days14}</strong><small>study days (14d)</small></div></div>
+        <div class="md">${md(r.summary)}</div>
+        <div class="rep-grid">${list('Highlights', r.highlights, 'hl')}${list('Strengths', r.strengths, 'good')}${list('Keep working on', r.focus, 'gap')}${list('Next steps', r.nextSteps, 'next')}</div>
+        ${r.forSupporters ? `<div class="rep-support"><h4>How you can help</h4><div class="md">${md(r.forSupporters)}</div></div>` : ''}</article>` : ''}</div>`;
+  }
+
+  // ---------- Diagrams (Mermaid, loaded only when a diagram appears) ----------
+  let mermaidReady = null;
+  function loadMermaid() {
+    if (!mermaidReady) mermaidReady = new Promise((resolve, reject) => {
+      const s = document.createElement('script'); s.src = '../../vendor/mermaid/mermaid.min.js';
+      s.onload = () => { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: 'DM Sans, system-ui, sans-serif', themeVariables: { primaryColor: '#efebff', primaryBorderColor: '#8a7be0', primaryTextColor: '#25242b', lineColor: '#8a7be0', secondaryColor: '#e6f6ee', tertiaryColor: '#fff3ec', fontSize: '15px' } }); resolve(window.mermaid); };
+      s.onerror = () => { mermaidReady = null; reject(new Error('diagram library failed')); };
+      document.head.append(s);
+    });
+    return mermaidReady;
+  }
+  async function hydrateDiagrams(root) {
+    const nodes = [...(root || document).querySelectorAll('.diagram:not([data-state])')]; if (!nodes.length) return;
+    nodes.forEach((n) => { n.dataset.state = 'loading'; });
+    let mermaid; try { mermaid = await loadMermaid(); } catch { nodes.forEach((n) => { n.dataset.state = 'error'; }); return; }
+    for (const n of nodes) {
+      const id = `mmd${uid()}`;
+      try { const { svg } = await mermaid.render(id, n.dataset.code); n.innerHTML = svg; n.dataset.state = 'ok'; }
+      catch { n.dataset.state = 'error'; document.getElementById(id)?.remove(); document.getElementById(`d${id}`)?.remove(); }
+    }
+  }
+
   // ---------- Actions ----------
   function currentNb() { return route.nbId ? findNb(route.nbId) : null; }
+  // Buttons rendered outside a notebook (e.g. the home coach) say which notebook they act on.
+  const nbFrom = (t) => (t?.dataset?.nb && findNb(t.dataset.nb)) || currentNb();
+  function cardAnswer(known) {
+    const nb = currentNb(), deck = nb?.decks?.find((d) => d.id === route.deckId); if (!deck || !cardState.flipped) return;
+    const card = deck.cards.find((c) => c.id === cardState.order[cardState.i]); if (card) card.known = known;
+    if (known) cardState.known += 1; else cardState.learning += 1;
+    cardState.i += 1; cardState.flipped = false; deck.studied = Date.now(); nb.lastStudiedAt = Date.now(); logActivity(); save(); render(true);
+  }
   function startLesson(nb, lessonId) {
     const i = nb.plan?.lessons.findIndex((l) => l.id === lessonId) ?? -1; if (i < 0) return;
     const lesson = nb.plan.lessons[i];
@@ -1088,14 +1466,6 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     const chat = createChat({ notebookId: nb.id, title: `Lesson ${i + 1}: ${lesson.title}`, lessonId });
     go(`#/nb/${nb.id}/chat/${chat.id}`);
     sendMessage(chat, `Let's start **Lesson ${i + 1}: ${lesson.title}**.\n\n${lesson.objectives.length ? `By the end I want to be able to:\n${lesson.objectives.map((o) => `- ${o}`).join('\n')}\n\n` : ''}Teach it step by step for my level, check my understanding with a question along the way, and finish with a short recap.`);
-  }
-  function toggleLesson(nb, lessonId) {
-    const l = nb.plan?.lessons.find((x) => x.id === lessonId); if (!l) return;
-    l.done = !l.done; l.doneAt = l.done ? Date.now() : 0; if (l.done) flash = { type: 'lesson', id: l.id };
-    const session = l.done && chats.find((c) => c.lessonId === l.id && c.notebookId === nb.id);
-    if (session && session.messages.filter((m) => m.role === 'user').length >= 2) setTimeout(() => adaptAfter(nb, { type: 'lesson', lesson: l, index: nb.plan.lessons.indexOf(l), chat: session }), 0); nb.updatedAt = Date.now(); if (l.done) nb.lastStudiedAt = Date.now(); save();
-    if (l.done) toast(nbProgress(nb).done === nbProgress(nb).total ? 'Plan complete! Amazing work. 🎉' : 'Lesson complete. Nice work! ✓');
-    render(true);
   }
   function deleteChat(id) {
     const chat = chats.find((c) => c.id === id); if (!chat) return;
@@ -1106,7 +1476,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
   }
 
   const actions = {
-    attach: () => el.fileInput.click(),
+    attach: () => { fileTarget = 'composer'; el.fileInput.click(); },
     'remove-file': (t) => { pendingFiles.splice(Number(t.dataset.index), 1); renderAttachments(); },
     starter: (t) => { const box = $('#composer-home'); box.value = t.dataset.prompt; autoResize(box); box.focus(); },
     template: (t) => { draftTemplate = TEMPLATES[t.dataset.key]; go('#/notebooks/new'); },
@@ -1126,16 +1496,29 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     'wiz-back': (t) => { const form = t.closest('form'); wizardStep(form, Number(form.dataset.step) - 1); },
     'retry-assessment': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (quiz?.attempts.length) adaptAfter(nb, { type: 'quiz', quiz, attempt: quiz.attempts[quiz.attempts.length - 1] }); },
     'plan-from-diagnostic': () => { const nb = currentNb(); if (!nb) return; go(`#/nb/${nb.id}/plan`); generatePlan(nb); },
-    'generate-plan': () => { const nb = currentNb(); if (nb) generatePlan(nb); },
+    'generate-plan': (t) => { const nb = nbFrom(t); if (!nb) return; if (route.nbId !== nb.id || !['nb-plan', 'nb-overview'].includes(route.view)) go(`#/nb/${nb.id}/plan`); generatePlan(nb); },
     'regenerate-plan': () => {
       const nb = currentNb(); if (!nb) return;
       showDialog({ title: 'Regenerate learning plan?', label: 'You’ll get a fresh plan based on your current goal, level, and quiz results. Lessons with the same title keep their completed status.', confirm: true, saveText: 'Regenerate', onSave: () => generatePlan(nb) });
     },
-    'start-lesson': (t) => { const nb = currentNb(); if (nb) startLesson(nb, t.dataset.id); },
-    'toggle-lesson': (t) => { const nb = currentNb(); if (nb) toggleLesson(nb, t.dataset.id); },
-    'lesson-quiz': (t) => { const nb = currentNb(); if (nb) generateQuiz(nb, { lessonId: t.dataset.id, count: 5, difficulty: 'matched', kind: 'quiz' }); },
-    'quick-quiz': (t) => { const nb = currentNb(); if (nb) generateQuiz(nb, { lessonId: '', count: Number(t.dataset.count) || 5, difficulty: 'matched', kind: 'quiz' }); },
-    diagnostic: () => { const nb = currentNb(); if (nb) generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'diagnostic' }); },
+    'start-lesson': (t) => { const nb = nbFrom(t); if (nb) startLesson(nb, t.dataset.id); },
+    'lesson-quiz': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: t.dataset.id, count: 5, difficulty: 'matched', kind: 'quiz' }); },
+    'quick-quiz': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: Number(t.dataset.count) || 5, difficulty: 'matched', kind: 'quiz' }); },
+    diagnostic: (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'diagnostic' }); },
+    'final-check': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'final' }); },
+    warmup: (t) => { const nb = nbFrom(t); if (nb) startWarmup(nb); },
+    'warmup-all': (t) => { const nb = nbFrom(t); if (nb) startWarmup(nb, true); },
+    'make-deck': (t) => { const nb = nbFrom(t); if (nb) generateDeck(nb); },
+    'delete-deck': (t) => { const nb = currentNb(); const d = nb?.decks?.find((x) => x.id === t.dataset.id); if (!d) return; showDialog({ title: 'Delete flashcards?', label: `Delete “${d.title}”?`, confirm: true, danger: true, saveText: 'Delete', onSave: () => { nb.decks = nb.decks.filter((x) => x.id !== d.id); save(); render(true); } }); },
+    flip: () => { cardState.flipped = !cardState.flipped; const card = $('.flashcard'); card?.classList.toggle('flipped', cardState.flipped); const acts = $('.flash-actions'); acts?.classList.toggle('show', cardState.flipped); acts?.querySelectorAll('button').forEach((b) => { b.disabled = !cardState.flipped; }); },
+    'card-known': () => cardAnswer(true),
+    'card-learning': () => cardAnswer(false),
+    'cards-again': (t) => { cardState.restart = t.dataset.mode; render(true); },
+    'upload-material': () => { fileTarget = 'material'; el.fileInput.click(); },
+    'delete-material': (t, e) => { e.stopPropagation(); const nb = currentNb(); const m = nb?.materials?.find((x) => x.id === t.dataset.id); if (!m) return; showDialog({ title: 'Remove material?', label: `Remove “${m.title}”? Your tutor will stop using it.`, confirm: true, danger: true, saveText: 'Remove', onSave: () => { nb.materials = nb.materials.filter((x) => x.id !== m.id); save(); render(true); } }); },
+    'make-report': () => { const nb = currentNb(); if (nb) generateReport(nb); },
+    'print-report': () => window.print(),
+    'copy-report': async () => { const nb = currentNb(); if (!nb?.report) return; try { await navigator.clipboard.writeText(reportText(nb, nb.report)); toast('Report copied.'); } catch { toast('Could not access the clipboard.'); } },
     'delete-quiz': (t) => {
       const nb = currentNb(); const quiz = nb?.quizzes.find((q) => q.id === t.dataset.id); if (!quiz) return;
       showDialog({ title: 'Delete quiz?', label: `Delete “${quiz.title}” and its results?`, confirm: true, danger: true, saveText: 'Delete', onSave: () => { nb.quizzes = nb.quizzes.filter((q) => q.id !== quiz.id); save(); render(true); } });
@@ -1161,14 +1544,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     'next-question': () => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.progress) return;
       quiz.progress.revealed = false;
-      if (quiz.progress.answers.length >= quiz.questions.length) {
-        const answers = quiz.progress.answers;
-        quiz.attempts.push({ at: Date.now(), answers, confidence: quiz.progress.confidence || [], total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length });
-        quiz.progress = null;
-        save(); render(true);
-        adaptAfter(nb, { type: 'quiz', quiz, attempt: quiz.attempts[quiz.attempts.length - 1] });
-        return;
-      }
+      if (quiz.progress.answers.length >= quiz.questions.length) { finishQuiz(nb, quiz); return; }
       save(); render(true);
     },
     'retake-quiz': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz) return; quiz.progress = { answers: [], confidence: [], revealed: false }; save(); render(true); },
@@ -1188,6 +1564,12 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
 
   // Keyboard shortcuts for quizzes (1-6 pick an answer, Enter goes to the next question).
   document.addEventListener('keydown', (e) => {
+    if (route.view === 'cards' && !e.target.closest('input, textarea, select') && !e.metaKey && !e.ctrlKey) {
+      if (e.key === ' ' || e.key === 'Enter') { if (e.target.closest('button') && e.target.dataset.action !== 'flip') return; e.preventDefault(); actions.flip(); }
+      else if (e.key === '1' && cardState.flipped) cardAnswer(false);
+      else if (e.key === '2' && cardState.flipped) cardAnswer(true);
+      return;
+    }
     if (route.view !== 'quiz' || e.target.closest('input, textarea, select') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^[1-6]$/.test(e.key)) $(`.choice[data-index="${Number(e.key) - 1}"]:not([disabled])`)?.click();
     else if (/^[gfc]$/i.test(e.key)) $(`.conf-chip.conf-${{ g: 'guess', f: 'fairly', c: 'certain' }[e.key.toLowerCase()]}:not([disabled])`)?.click();
@@ -1238,7 +1620,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
       e.preventDefault();
       const nb = currentNb(); if (!nb) return;
       const f = new FormData(form), scope = String(f.get('scope') || '');
-      generateQuiz(nb, { kind: scope === 'diagnostic' ? 'diagnostic' : 'quiz', lessonId: scope === 'diagnostic' ? '' : scope, count: Number(f.get('count')) || 8, difficulty: String(f.get('difficulty') || 'matched') });
+      generateQuiz(nb, { kind: ['diagnostic', 'final'].includes(scope) ? scope : 'quiz', lessonId: ['diagnostic', 'final'].includes(scope) ? '' : scope, count: Number(f.get('count')) || 8, difficulty: String(f.get('difficulty') || 'matched') });
     }
   });
 
@@ -1261,6 +1643,11 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     try { localStorage.setItem(KEYS.font, selected); } catch {}
   }
   el.font.addEventListener('change', () => applyFont(el.font.value));
+  const styleSelect = $('#explainStyle');
+  if (styleSelect) {
+    styleSelect.value = explainStyle();
+    styleSelect.addEventListener('change', () => { try { localStorage.setItem(KEYS.style, styleSelect.value); } catch {} toast(`Your tutor will now explain things: ${STYLES[styleSelect.value].toLowerCase()}.`); });
+  }
   $('#openSidebar').addEventListener('click', openSidebar);
   $('#closeSidebar').addEventListener('click', closeSidebar);
   el.scrim.addEventListener('click', closeSidebar);

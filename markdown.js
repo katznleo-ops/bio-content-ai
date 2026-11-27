@@ -28,8 +28,11 @@
     let text = String(source || '').replace(/\f/g, '\\f').replace(/\x08/g, '\\b').replace(/\r\n?/g, '\n');
 
     // 1. Pull out code and math first so their contents are never treated as Markdown.
+    // Mermaid blocks become diagrams (drawn by the app once the answer is complete); the source shows until then.
     text = text.replace(/^```[ \t]*([\w+-]*)[^\n]*\n([\s\S]*?)(?:^```[ \t]*$|(?![\s\S]))/gm, (_, lang, code) =>
-      '\n' + hold(`<pre><code${lang ? ` class="lang-${esc(lang)}"` : ''}>${esc(code.replace(/\n$/, ''))}</code></pre>`) + '\n');
+      '\n' + hold(lang.toLowerCase() === 'mermaid'
+        ? `<div class="diagram" data-code="${esc(code.trim())}"><pre class="diagram-src"><code>${esc(code.replace(/\n$/, ''))}</code></pre></div>`
+        : `<pre><code${lang ? ` class="lang-${esc(lang)}"` : ''}>${esc(code.replace(/\n$/, ''))}</code></pre>`) + '\n');
     text = text.replace(/`([^`\n]+)`/g, (_, code) => hold(`<code>${esc(code)}</code>`));
     text = text.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g, (_, a, b) => '\n' + hold(`<div class="math-display">${renderMath((a || b).trim(), true)}</div>`) + '\n');
     text = text.replace(/\\\((.+?)\\\)|(^|[^\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (m, a, pre, b) =>
