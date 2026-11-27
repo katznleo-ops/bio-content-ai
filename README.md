@@ -30,6 +30,15 @@ Notebooks are private study spaces. Each has a goal, level, pace, optional targe
 - **Class materials** are summarized once and used in every session, quiz, and plan update. **Progress reports** can be printed or copied.
 - Hint buttons, confidence checks, read-aloud, voice input, explanation styles, Mermaid diagrams, streaks, and a weekly goal.
 
+### Gemini Decisions API (optional, separate key)
+
+`api/decide.js` and a server-side guard in `api/solve.js` use the Gemini Decisions API (`gemini-decision-1`) with its own key, so decision traffic never uses the tutor's quota. Set these on the Vercel project:
+
+- `GEMINI_DECISIONS_API_KEY` (required to enable decision features)
+- `GEMINI_DECISIONS_MODEL` (optional, defaults to `gemini-decision-1`)
+
+With the key set: chat messages (including attached photos/PDFs) are checked for answer-seeking before the tutor replies; lesson objectives are scored after every tutor reply to unlock the lesson quiz; free-form sessions are scored against every plan objective, gap, and mistake pattern to update the learner profile; quizzes get short-answer questions graded by rubric; every generated quiz is fact-checked; mistakes are sorted by pattern; uploaded class materials are mapped to plan objectives. Without the key, each feature falls back to its earlier behavior.
+
 ## Run the frontend locally
 
 Because the site calls a serverless endpoint, opening `index.html` directly will not provide a working chat API. Serve the static files locally and run the API in a compatible serverless development environment, or deploy the project to a platform that serves the `api/` function.
