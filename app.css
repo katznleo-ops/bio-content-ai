@@ -864,3 +864,40 @@ a,button,.btn,.sb-chat,.sb-tab,.sb-notebook,.list-row,.quiz-row,.choice,.pill sp
 .mastery-line{display:flex;align-items:center;gap:12px;margin:0 0 12px;font-size:13.5px;font-weight:600;color:var(--ink-2)}
 .mastery-line .progress{flex:0 0 160px}
 @media (max-width:820px){.tag-bar{grid-template-columns:1fr 1fr 24px}.obj-check{display:none}}
+
+/* ---------- Lesson recap, tool suggestions, quiz lock ---------- */
+.sb-badge{background:var(--accent);box-shadow:0 2px 6px color-mix(in srgb,var(--accent) 35%,transparent)}
+.sb-tab span{font-weight:800}
+.quiz-lock{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:11px;background:#fff;border:1px dashed color-mix(in srgb,var(--accent) 35%,#e3e0ee);color:var(--muted);font-size:13.5px;font-weight:700;white-space:nowrap}
+.lesson-banner .lesson-meter .progress{flex-basis:120px}
+.lesson-brief-slot:empty{display:none}
+.lesson-brief-slot{padding:14px max(28px,calc((100% - 820px)/2)) 0}
+.brief{position:relative;padding:16px 18px;border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 7%,#fff),#fff);border:1px solid color-mix(in srgb,var(--accent) 20%,#fff);box-shadow:var(--shadow);animation:fadeUp .4s var(--ease-out) both;transition:opacity .2s,transform .2s}
+.brief.closing{opacity:0;transform:translateY(-6px)}
+.brief.loading{display:flex;align-items:center;gap:12px}
+.brief.loading p{margin:2px 0 0;color:var(--muted);font-size:14px}
+.brief-head{display:flex;align-items:center;gap:10px}
+.brief-head>div{flex:1}
+.brief-icon{font-size:20px}
+.brief .sb-icon{opacity:1}
+.brief ul{margin:8px 0 8px;padding-left:22px;font-size:15px;color:var(--ink-2)}
+.brief li{margin:3px 0}
+.brief li::marker{color:var(--accent)}
+.brief p{margin:6px 0;font-size:14.5px;color:var(--ink-2)}
+.brief-next strong{color:var(--accent-ink)}
+.brief .btn{margin-top:6px}
+.tip-card{display:flex;align-items:center;gap:12px;margin-top:12px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb,var(--accent) 6%,#fff);border:1px solid color-mix(in srgb,var(--accent) 18%,#fff);animation:fadeUp .45s .25s var(--ease-out) both}
+.tip-icon{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:11px;background:#fff;color:var(--accent);font-size:17px;font-weight:800}
+.tip-text{flex:1;min-width:0;font-size:14px;line-height:1.5;color:var(--ink-2);font-family:var(--font)}
+.tip-card .btn{flex:0 0 auto}
+.tip-card .sb-icon{opacity:.7}
+.tools-card{margin-bottom:18px}
+.tools-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tool{display:flex;gap:10px;padding:12px;border-radius:12px;background:#fbfaff;border:1px solid #efecf8;text-decoration:none;transition:transform .2s var(--ease-out),border-color .2s,background .2s}
+a.tool:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 35%,#fff);background:#fff}
+.tool>span{display:grid;place-items:center;flex:0 0 32px;height:32px;border-radius:10px;background:#fff;color:var(--accent);font-size:16px;font-weight:800}
+.tool strong{display:block;font-size:14.5px}
+.tool small{display:block;color:var(--muted);font-size:13px;line-height:1.4}
+.action-card.tint-mint>span{color:#3c8a60;font-weight:800;font-size:22px}
+.coach-icon{font-weight:800}
+@media (max-width:820px){.tools-grid{grid-template-columns:1fr}.tip-card{flex-wrap:wrap}.lesson-brief-slot{padding:12px 12px 0}.quiz-lock{white-space:normal}}
