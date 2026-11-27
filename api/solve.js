@@ -8,6 +8,7 @@ const ALLOWED_ORIGINS = new Set([
 const COMMIT = (process.env.VERCEL_GIT_COMMIT_SHA || 'unknown').slice(0, 12);
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 8000;
+const MAX_JSON_MESSAGE_LENGTH = 16000;
 const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 // Tutoring rules live on the server so the browser cannot remove them.
 const SYSTEM_PROMPT=[
@@ -42,12 +43,14 @@ function parseAttachment(file,budget){
   return{name:file.name,type:file.type,part:{text:`\n\n[Attached file: ${file.name}]\n${text}`}};
 }
 function readMessages(body){
-  if(typeof body?.prompt==='string'){const text=body.prompt.trim();return text&&text.length<=MAX_MESSAGE_LENGTH?[{role:'user',parts:[{text}]}]:null}
+  // Structured requests (plans, quizzes, adaptation reviews) carry more context than a chat message.
+  const maxLength=body?.format==='json'?MAX_JSON_MESSAGE_LENGTH:MAX_MESSAGE_LENGTH;
+  if(typeof body?.prompt==='string'){const text=body.prompt.trim();return text&&text.length<=maxLength?[{role:'user',parts:[{text}]}]:null}
   if(!Array.isArray(body?.messages)||!body.messages.length||body.messages.length>MAX_MESSAGES)return null;
   const budget={total:0},messages=[];
   for(const item of body.messages){
     if(!item||!['user','model'].includes(item.role)||typeof item.text!=='string')return null;
-    const text=item.text.trim();if(text.length>MAX_MESSAGE_LENGTH)return null;
+    const text=item.text.trim();if(text.length>maxLength)return null;
     const role=item.role;const parts=[];if(text)parts.push({text});
     if(item.attachments!==undefined){if(!Array.isArray(item.attachments)||item.attachments.length>4)return null;for(const file of item.attachments){const attachment=parseAttachment(file,budget);if(!attachment)return null;if(attachment.part.text)parts.push(attachment.part);else parts.push(attachment.part)}}
     if(!parts.length)return null;

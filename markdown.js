@@ -16,7 +16,7 @@
 
   function renderMath(tex, display) {
     if (window.katex) {
-      try { return window.katex.renderToString(tidyTex(tex), { displayMode: display, throwOnError: false, output: 'html' }); } catch {}
+      try { return window.katex.renderToString(tidyTex(tex.replace(/\t/g, '\\t').replace(/\v/g, '\\v')), { displayMode: display, throwOnError: false, output: 'html' }); } catch {}
     }
     return display ? `<div class="math-fallback">${esc(tex)}</div>` : `<code>${esc(tex)}</code>`;
   }
@@ -24,7 +24,8 @@
   function renderMarkdown(source) {
     const slots = [];
     const hold = (html) => `\u0000${slots.push(html) - 1}\u0000`;
-    let text = String(source || '').replace(/\r\n?/g, '\n');
+    // Older saved text may contain control characters left by a mangled "\\frac" (form feed) or "\\beta" (backspace).
+    let text = String(source || '').replace(/\f/g, '\\f').replace(/\x08/g, '\\b').replace(/\r\n?/g, '\n');
 
     // 1. Pull out code and math first so their contents are never treated as Markdown.
     text = text.replace(/^```[ \t]*([\w+-]*)[^\n]*\n([\s\S]*?)(?:^```[ \t]*$|(?![\s\S]))/gm, (_, lang, code) =>

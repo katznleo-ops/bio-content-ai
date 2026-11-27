@@ -555,7 +555,8 @@
       if (next) lines.push(`Next lesson to study: ${next.title}.`);
     }
     const dg = diagnosticSummary(nb);
-    if (dg?.assessment) lines.push(`Diagnostic (${dg.attempt.score}/${dg.attempt.total}). ${assessmentText(dg.assessment)}`);
+    if (nb.profile) lines.push(`What you know about this learner (updated after every quiz and lesson):\n${profileText(nb.profile)}\nAdapt your teaching to this: target their gaps, watch for their mistake patterns and name them when they show up, build on their strengths, and move quickly through what they have mastered.`);
+    else if (dg?.assessment) lines.push(`Diagnostic (${dg.attempt.score}/${dg.attempt.total}). ${assessmentText(dg.assessment)}`);
     const { attempts } = quizStats(nb);
     if (attempts.length) {
       lines.push('Recent quiz results:');
@@ -565,8 +566,31 @@
       }
     }
     const lesson = lessonOf(nb, chat);
-    if (lesson) lines.push(`This session is Lesson ${lesson.index + 1}: "${lesson.lesson.title}". Summary: ${lesson.lesson.summary} Objectives: ${lesson.lesson.objectives.join('; ')}. Teach interactively: explain in small steps, use examples, check understanding with a question before moving on, and finish with a short recap.`);
+    if (lesson) lines.push(`This session is Lesson ${lesson.index + 1}: "${lesson.lesson.title}". Summary: ${lesson.lesson.summary} Objectives: ${lesson.lesson.objectives.join('; ')}.${lesson.lesson.reason ? ` This lesson was adapted for them: ${lesson.lesson.reason}` : ''} Teach interactively: explain in small steps, use examples, check understanding with a question before moving on, and finish with a short recap.`);
     return lines.join('\n').slice(0, 5800);
+  }
+
+  // Models often write LaTeX inside JSON strings without doubling the backslash, so "\\frac" arrives as a
+  // form feed + "rac", "\\times" as a tab + "imes", and "\\alpha" breaks JSON.parse. Inside string literals,
+  // keep real escapes (\\n, \\", \\uXXXX) and double every backslash that starts a LaTeX command.
+  const LATEX_AFTER_N = /^n(?:eq|abla|u|ot|e|i|less|gtr|leq|geq|mid|parallel|exists|eg|ewline)(?![a-zA-Z])/;
+  function repairJsonEscapes(raw) {
+    let out = '', inString = false;
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i];
+      if (!inString) { if (c === '"') inString = true; out += c; continue; }
+      if (c === '"') { inString = false; out += c; continue; }
+      if (c !== '\\') { out += c; continue; }
+      const next = raw[i + 1] ?? '', rest = raw.slice(i + 1, i + 14);
+      if (next === '"' || next === '\\' || next === '/') { out += c + next; i++; continue; }
+      let latex;
+      if (next === 'u') latex = !/^u[0-9a-fA-F]{4}/.test(rest);
+      else if ('bfrt'.includes(next)) latex = /^[bfrt][a-zA-Z]/.test(rest);
+      else if (next === 'n') latex = LATEX_AFTER_N.test(rest);
+      else latex = true; // not a valid JSON escape at all, e.g. \\alpha or \\(
+      out += latex ? '\\\\' : c;
+    }
+    return out;
   }
 
   async function generateJSON(prompt, context) {
@@ -576,7 +600,7 @@
     let raw = String(data.answer || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
     const start = raw.indexOf('{'), end = raw.lastIndexOf('}');
     if (start < 0 || end < start) throw new Error('The tutor sent back something unexpected. Please try again.');
-    try { return JSON.parse(raw.slice(start, end + 1)); } catch { throw new Error('The tutor sent back something unexpected. Please try again.'); }
+    try { return JSON.parse(repairJsonEscapes(raw.slice(start, end + 1))); } catch { throw new Error('The tutor sent back something unexpected. Please try again.'); }
   }
   const str = (v, max = 600) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -593,40 +617,103 @@
     return [`Tutor's assessment: ${a.headline}`, a.summary, a.strengths.length ? `Strengths: ${a.strengths.join('; ')}` : '', a.gaps.length ? `Gaps to work on: ${a.gaps.join('; ')}` : '', a.patterns.length ? `Patterns in mistakes: ${a.patterns.join('; ')}` : '', a.startingPoint ? `Recommended starting point: ${a.startingPoint}` : ''].filter(Boolean).join('\n');
   }
 
-  // After a diagnostic, compare the results with what the learner said about themselves.
-  function assessmentPrompt(nb, quiz, attempt) {
-    return `I just finished a diagnostic quiz for my notebook "${nb.name}". Please assess where I am right now.
-
-What I told you when I set up the notebook:
-- Grade / level: ${gradeLabel(nb) || 'Not specified'}
-- What I'm struggling with: ${nb.struggles || 'Not specified'}
-- My goal: ${nb.goal || 'Not specified'}
-
-My diagnostic score: ${attempt.score}/${attempt.total}. Question by question (ordered roughly from easier to harder):
-${diagnosticDetail(quiz, attempt)}
-
-Compare my actual results with what I said I struggle with: where do they match, and where do they differ (for example, I may be stronger than I think in one area, or have a gap I didn't mention)? Look for patterns across my wrong answers (a shared misconception, a skill that keeps tripping me up, or a point where the difficulty breaks down). Use my confidence too: wrong answers I was certain about point to misconceptions, and right answers I was only guessing on are not secure yet.
-
-Return JSON with exactly this shape:
-{"headline": string (one short, encouraging sentence summing up where I am), "summary": string (2-4 sentences speaking directly to me as my tutor: honest, warm, and specific, comparing my results with what I told you), "selfReport": "matches" | "partly" | "differs", "strengths": [1-3 short strings], "gaps": [1-4 short strings naming specific skills or concepts], "patterns": [0-3 short strings describing patterns in my mistakes], "startingPoint": string (one sentence on where my learning plan should start)}
-Describe skills and concepts; do not just list the questions.`;
+  // ---------- Adaptive tutoring ----------
+  // Every notebook keeps a learner profile (level, strengths, gaps, mistake patterns). After every quiz,
+  // diagnostic, and completed lesson, ONE request reviews what happened, updates the profile, and rewrites
+  // the lessons the learner hasn't started yet. Completed lessons never change.
+  const listOf = (v, n, max = 240) => (Array.isArray(v) ? v : []).map((x) => str(x, max)).filter(Boolean).slice(0, n);
+  function profileText(p) {
+    if (!p) return '';
+    return [p.level ? `Current level: ${p.level}` : '', p.summary, p.strengths.length ? `Strengths: ${p.strengths.join('; ')}` : '', p.gaps.length ? `Gaps (most important first): ${p.gaps.join('; ')}` : '', p.patterns.length ? `Mistake patterns: ${p.patterns.join('; ')}` : ''].filter(Boolean).join('\n');
+  }
+  function planListing(nb) {
+    return nb.plan.lessons.map((l, i) => `- id ${l.id} | ${l.done ? 'COMPLETED' : 'not started'} | Lesson ${i + 1}: ${l.title}. ${oneLine(l.summary, 160)} Objectives: ${l.objectives.join('; ')} (${l.minutes} min)`).join('\n');
+  }
+  function lessonTranscript(chat) {
+    return chat.messages.filter((m) => !m.error).slice(-24).map((m) => `${m.role === 'assistant' ? 'Tutor' : 'Me'}: ${oneLine(m.text, 500)}`).join('\n').slice(-3600);
+  }
+  function adaptPrompt(nb, event) {
+    const isQuiz = event.type === 'quiz', isDiag = isQuiz && event.quiz.kind === 'diagnostic';
+    const parts = [`You are my long-term tutor for my notebook "${nb.name}". Something new just happened. You need to (1) give me feedback on it, (2) update what you know about me, and ${nb.plan ? '(3) adapt my learning plan to it' : '(3) say where my learning plan should start'}.`];
+    parts.push(`About me (from setup): grade/level: ${gradeLabel(nb) || 'not specified'}; what I said I struggle with: ${nb.struggles || 'not specified'}; my goal: ${nb.goal || 'not specified'}; pace: ${PACES[nb.pace]}${nb.deadline ? `; target date: ${nb.deadline}` : ''}.`);
+    parts.push(nb.profile ? `What you knew about me before this (learner profile):\n${profileText(nb.profile)}` : 'You have no learner profile for me yet. Build one from this event and my setup answers.');
+    const history = (nb.updates || []).slice(0, 5).map((u) => `- ${new Date(u.at).toLocaleDateString()} · ${u.source}: ${u.headline}`).join('\n');
+    if (history) parts.push(`Recent history:\n${history}`);
+    if (isQuiz) {
+      const { quiz, attempt } = event, lesson = nb.plan?.lessons.find((l) => l.id === quiz.lessonId);
+      const earlier = quiz.attempts.slice(0, -1).map((a) => `${a.score}/${a.total}`).join(', ');
+      parts.push(`NEW EVENT: I finished ${isDiag ? 'a diagnostic quiz' : lesson ? `a quiz on the lesson "${lesson.title}"` : 'a review quiz'} ("${quiz.title}", ${(DIFFICULTIES[quiz.difficulty] || 'just right').toLowerCase()} difficulty). Score: ${attempt.score}/${attempt.total}${earlier ? ` (earlier attempts: ${earlier})` : ''}. Question by question:\n${diagnosticDetail(quiz, attempt)}`);
+    } else {
+      parts.push(`NEW EVENT: I just finished Lesson ${event.index + 1}: "${event.lesson.title}" (objectives: ${event.lesson.objectives.join('; ')}). Here is the most recent part of our lesson session:\n${lessonTranscript(event.chat)}`);
+    }
+    if (nb.plan) parts.push(`My current learning plan "${nb.plan.title}" (keep these ids):\n${planListing(nb)}`);
+    parts.push(`How to think about it:
+- Compare this with what you knew about me before${isDiag ? ' and with what I told you in setup (where do they match, where do they differ?)' : ''}. Note what improved, what is still shaky, and anything new.
+- Look for patterns across my mistakes, here and in the history. Wrong answers I was certain about point to misconceptions; right answers I only guessed are not secure yet.${isQuiz ? '' : '\n- Judge my understanding from what I actually said and did in the session, not just from finishing it.'}
+- Be honest, specific, warm, and encouraging. Speak directly to me. Describe skills and concepts; do not just list questions. Use $...$ only for real math.`);
+    const planShape = nb.plan ? `, "plan": {"changed": boolean, "note": string (1-2 sentences to me: what you changed and why, or why the plan still fits), "changes": [0-4 short strings, one per change], "upcoming": [every lesson I have NOT completed, in the new order: {"id": string (an existing id, or "new"), "title": string, "summary": string, "objectives": [3-4 strings], "minutes": number, "reason": string (why it was added or changed; "" if unchanged)}]}` : '';
+    parts.push(`Return JSON with exactly this shape:
+{"headline": string (one sentence on where I am now), "summary": string (2-4 sentences of feedback on this ${isQuiz ? 'quiz' : 'lesson'}, compared with before)${isDiag ? ', "selfReport": "matches" | "partly" | "differs"' : ''}, "strengths": [1-3 strings], "gaps": [0-4 strings], "patterns": [0-3 strings]${nb.plan ? '' : ', "startingPoint": string (one sentence on where my learning plan should start)'}, "profile": {"level": string (one line on my current level), "summary": string (2-3 sentences, cumulative across everything so far), "strengths": [up to 5], "gaps": [up to 5, most important first], "patterns": [up to 4]}${planShape}}${nb.plan ? `
+Plan rules: never include or change completed lessons. Adapt the not-started lessons to my current level: add a focused lesson or short review for a new or persistent gap, add objectives that target my mistake patterns, shorten or merge lessons on things I have clearly mastered, and reorder if that helps. Keep 3 to 10 upcoming lessons. If nothing needs to change, set "changed": false and return the upcoming lessons as they are.` : ''}`);
+    return parts.join('\n\n');
   }
   function normalizeAssessment(d) {
-    const list = (v, n) => (Array.isArray(v) ? v : []).map((x) => str(x, 240)).filter(Boolean).slice(0, n);
-    const headline = str(d?.headline, 200), summary = str(d?.summary, 1200);
+    const headline = str(d?.headline, 220), summary = str(d?.summary, 1200);
     if (!headline && !summary) return null;
-    return { headline, summary, selfReport: ['matches', 'partly', 'differs'].includes(d?.selfReport) ? d.selfReport : '', strengths: list(d?.strengths, 3), gaps: list(d?.gaps, 4), patterns: list(d?.patterns, 3), startingPoint: str(d?.startingPoint, 300), at: Date.now() };
+    return { headline, summary, selfReport: ['matches', 'partly', 'differs'].includes(d?.selfReport) ? d.selfReport : '', strengths: listOf(d?.strengths, 3), gaps: listOf(d?.gaps, 4), patterns: listOf(d?.patterns, 3), startingPoint: str(d?.startingPoint, 300), at: Date.now() };
   }
-  async function assessDiagnostic(nb, quiz) {
-    const attempt = quiz.attempts[quiz.attempts.length - 1]; if (!attempt) return;
-    const key = `assess:${quiz.id}`; if (jobs[key]) return;
-    jobs[key] = true; delete jobErrors[key]; refreshIf(nb.id);
-    try {
-      const assessment = normalizeAssessment(await generateJSON(assessmentPrompt(nb, quiz, attempt), notebookContext({ ...nb, plan: null, quizzes: [] })));
-      if (!assessment) throw new Error('Your tutor could not review the results. Please try again.');
-      attempt.assessment = assessment; save();
-    } catch (e) { jobErrors[key] = e.message; }
-    finally { delete jobs[key]; refreshIf(nb.id); }
+  function normalizeAdapt(d, hasPlan) {
+    const assessment = normalizeAssessment(d); if (!assessment) return null;
+    const p = d.profile && typeof d.profile === 'object' ? d.profile : {};
+    const profile = { level: str(p.level, 220), summary: str(p.summary, 900), strengths: listOf(p.strengths, 5), gaps: listOf(p.gaps, 5), patterns: listOf(p.patterns, 4), updatedAt: Date.now() };
+    let plan = null;
+    if (hasPlan && d.plan && typeof d.plan === 'object') {
+      const upcoming = (Array.isArray(d.plan.upcoming) ? d.plan.upcoming : []).map((l) => ({ id: str(l?.id, 40), title: str(l?.title, 120), summary: str(l?.summary), objectives: listOf(l?.objectives, 6, 200), minutes: Math.max(5, Math.min(240, Math.round(Number(l?.minutes) || 30))), reason: str(l?.reason, 240) })).filter((l) => l.title).slice(0, 12);
+      plan = { changed: d.plan.changed === true && upcoming.length > 0, note: str(d.plan.note, 500), changes: listOf(d.plan.changes, 4), upcoming };
+    }
+    return { assessment, profile: profile.level || profile.summary ? profile : null, plan };
+  }
+  function applyPlanUpdate(nb, update) {
+    const old = nb.plan, byId = new Map(old.lessons.map((l) => [l.id, l])), now = Date.now();
+    const upcoming = update.upcoming.map((u) => {
+      const prev = byId.get(u.id);
+      if (prev && !prev.done) {
+        const changed = prev.title !== u.title || prev.summary !== u.summary || prev.objectives.join('|') !== u.objectives.join('|');
+        return { ...prev, title: u.title, summary: u.summary || prev.summary, objectives: u.objectives.length ? u.objectives : prev.objectives, minutes: u.minutes, ...(changed ? { reason: u.reason || 'Adjusted to your latest results.', badge: prev.badge === 'new' ? 'new' : 'updated', badgeAt: now } : {}) };
+      }
+      return { id: uid(), title: u.title, summary: u.summary, objectives: u.objectives, minutes: u.minutes, done: false, doneAt: 0, reason: u.reason || 'Added for you based on your latest results.', badge: 'new', badgeAt: now };
+    });
+    if (!upcoming.length) return false;
+    nb.plan = { ...old, lessons: [...old.lessons.filter((l) => l.done), ...upcoming], adaptedAt: now };
+    return true;
+  }
+  // Adaptations for one notebook run one at a time, so each builds on the last.
+  const adaptQueue = {};
+  function adaptAfter(nb, event) {
+    const key = event.type === 'quiz' ? `assess:${event.quiz.id}` : `debrief:${event.lesson.id}`;
+    if (jobs[key]) return;
+    jobs[key] = true; jobs[`adapt:${nb.id}`] = (jobs[`adapt:${nb.id}`] || 0) + 1; delete jobErrors[key]; refreshIf(nb.id);
+    adaptQueue[nb.id] = (adaptQueue[nb.id] || Promise.resolve()).then(async () => {
+      try {
+        const result = normalizeAdapt(await generateJSON(adaptPrompt(nb, event), ''), !!nb.plan);
+        if (!result) throw new Error('Your tutor could not review this. Please try again.');
+        const { assessment, profile, plan } = result;
+        let planChanged = false;
+        if (plan) { assessment.planNote = plan.note; if (plan.changed) planChanged = applyPlanUpdate(nb, plan); assessment.planChanges = planChanged ? plan.changes : []; }
+        assessment.planChanged = planChanged;
+        if (event.type === 'quiz') event.attempt.assessment = assessment; else event.lesson.debrief = assessment;
+        if (profile) nb.profile = profile;
+        const source = event.type === 'quiz' ? (event.quiz.kind === 'diagnostic' ? 'Diagnostic' : `Quiz · ${event.quiz.title}`) : `Lesson · ${event.lesson.title}`;
+        (nb.updates ||= []).unshift({ id: uid(), at: Date.now(), source, headline: assessment.headline, planChanged, planNote: planChanged ? plan.note : '', href: event.type === 'quiz' ? `#/nb/${nb.id}/quiz/${event.quiz.id}` : `#/nb/${nb.id}/plan` });
+        nb.updates = nb.updates.slice(0, 30); nb.updatedAt = Date.now(); save();
+        const onResults = event.type === 'quiz' && route.view === 'quiz' && route.quizId === event.quiz.id;
+        if (!onResults) toast(planChanged ? `🔄 Plan adapted: ${plan.note}` : `Your tutor updated what it knows about you.`);
+      } catch (e) { jobErrors[key] = e.message; if (event.type === 'lesson') toast(e.message); }
+      finally {
+        delete jobs[key]; jobs[`adapt:${nb.id}`] -= 1; if (jobs[`adapt:${nb.id}`] <= 0) delete jobs[`adapt:${nb.id}`];
+        refreshIf(nb.id);
+      }
+    });
   }
 
   function planPrompt(nb) {
@@ -636,7 +723,7 @@ Grade / level: ${gradeLabel(nb) || 'Not specified'}
 What I'm struggling with: ${nb.struggles || 'Not specified'}
 Goal: ${nb.goal || `Build a solid understanding of ${nb.name}.`}
 Time I can study: ${PACES[nb.pace]}${nb.deadline ? `\nI'm working toward: ${nb.deadline}` : ''}
-${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Question by question (ordered roughly from easier to harder):\n${diagnosticDetail(d.quiz, d.attempt)}${d.assessment ? `\n\n${assessmentText(d.assessment)}` : ''}` : 'No diagnostic taken yet.'}
+${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Question by question (ordered roughly from easier to harder):\n${diagnosticDetail(d.quiz, d.attempt)}${d.assessment ? `\n\n${assessmentText(d.assessment)}` : ''}` : 'No diagnostic taken yet.'}${nb.profile ? `\n\nWhat my tutor currently knows about me:\n${profileText(nb.profile)}` : ''}
 
 Return JSON with exactly this shape:
 {"title": string, "overview": string (2-3 sentences explaining the approach), "lessons": [{"title": string, "summary": string (1-2 sentences), "objectives": [3-4 short strings], "minutes": number (estimated study time)}]}
@@ -682,7 +769,8 @@ Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
 Number of questions: ${count}. Difficulty: ${DIFFICULTIES[difficulty] || 'Just right'} for my level.
 Return JSON with exactly this shape:
 {"title": string (short), "questions": [{"question": string, "choices": [4 strings], "answer": number (0-based index of the single correct choice), "explanation": string (1-3 sentences on why the answer is right)}]}
-Mix question types (concepts, applying ideas, common misconceptions). Vary which position holds the correct answer. Avoid "all of the above".`;
+Mix question types (concepts, applying ideas, common misconceptions). Vary which position holds the correct answer. Avoid "all of the above".${nb.profile && kind !== 'diagnostic' ? `
+Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(0, 3).join('; ') || 'none noted'}), include a question that tests each of my mistake patterns (${nb.profile.patterns.slice(0, 3).join('; ') || 'none noted'}), and keep things I've mastered to a quick check.` : ''}`;
   }
   function normalizeQuiz(data, opts) {
     const questions = (Array.isArray(data?.questions) ? data.questions : []).map((q) => {
@@ -838,6 +926,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         <div class="stat tint-blue"><span>Last studied</span><strong class="stat-text">${timeAgo(nb.lastStudiedAt)}</strong></div>
       </div>
       ${nextLessonCard(nb)}
+      ${profileCard(nb)}
       <div class="action-grid">
         <button type="button" class="action-card tint-lilac" data-action="quick-quiz"><span>✦</span><strong>Quiz me</strong><small>5 questions on what I've studied</small></button>
         <button type="button" class="action-card tint-mint" data-action="diagnostic"><span>◎</span><strong>Diagnostic check</strong><small>Find my real starting level</small></button>
@@ -853,18 +942,32 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   const SELF_REPORT = { matches: 'Matches what you told me', partly: 'Partly matches what you told me', differs: 'Different from what you expected' };
   function assessmentHtml(nb, quiz, attempt) {
     const key = `assess:${quiz.id}`;
-    if (jobs[key]) return `<div class="assessment loading"><div class="spinner"></div><div><strong>Your tutor is reviewing your answers…</strong><p>Comparing your results with what you told us about ${esc(nb.name)}.</p></div></div>`;
+    if (jobs[key]) return `<div class="assessment loading"><div class="spinner"></div><div><strong>Your tutor is reviewing your answers…</strong><p>${quiz.kind === 'diagnostic' ? `Comparing your results with what you told us about ${esc(nb.name)}.` : 'Comparing them with everything it knows about you'}${nb.plan ? ', then adapting your plan.' : '.'}</p></div></div>`;
     const as = attempt.assessment;
     if (!as) return `<div class="assessment empty"><p>${jobErrors[key] ? esc(jobErrors[key]) : 'Get your tutor’s take on these results.'}</p><button type="button" class="btn btn-soft" data-action="retry-assessment">${jobErrors[key] ? 'Try again' : 'Review my results'}</button></div>`;
     const list = (title, items, cls) => (items.length ? `<div class="assess-list ${cls}"><h4>${title}</h4><ul>${items.map((x) => `<li>${mdInline(x)}</li>`).join('')}</ul></div>` : '');
     return `<div class="assessment">
-      <div class="assess-head"><span class="assess-avatar" aria-hidden="true">E</span><div><span class="eyebrow">Your tutor's take</span><strong>${esc(as.headline)}</strong></div></div>
+      <div class="assess-head"><span class="assess-avatar" aria-hidden="true">E</span><div><span class="eyebrow">Your tutor's take</span><strong>${mdInline(as.headline)}</strong></div></div>
       ${as.selfReport ? `<span class="assess-badge ${as.selfReport}">${SELF_REPORT[as.selfReport]}</span>` : ''}
       <div class="md assess-summary">${md(as.summary)}</div>
       <div class="assess-grid">${list('Already strong', as.strengths, 'good')}${list('Let’s work on', as.gaps, 'gap')}</div>
       ${list('Patterns I noticed', as.patterns, 'pattern')}
       ${as.startingPoint ? `<p class="assess-start"><strong>Where we’ll start:</strong> ${mdInline(as.startingPoint)}</p>` : ''}
+      ${as.planNote ? `<div class="assess-plan${as.planChanged ? ' changed' : ''}"><strong>${as.planChanged ? '🔄 I adapted your plan' : '✓ Your plan still fits'}</strong><p>${mdInline(as.planNote)}</p>
+        ${as.planChanges?.length ? `<ul>${as.planChanges.map((c) => `<li>${mdInline(c)}</li>`).join('')}</ul>` : ''}${as.planChanged ? `<a class="btn btn-soft btn-sm" href="#/nb/${nb.id}/plan">See your updated plan →</a>` : ''}</div>` : ''}
     </div>`;
+  }
+  function profileCard(nb) {
+    const p = nb.profile, working = jobs[`adapt:${nb.id}`];
+    if (!p && !working) return '';
+    const chips = (items, cls) => items.map((x) => `<span class="chip ${cls}">${mdInline(x)}</span>`).join('');
+    const updates = (nb.updates || []).slice(0, 4);
+    return `<section class="card profile-card">
+      <div class="card-head"><h3>What your tutor knows about you</h3>${working ? '<span class="live-pill"><span class="spinner sm"></span>Updating…</span>' : p ? `<span class="muted small">Updated ${timeAgo(p.updatedAt).toLowerCase()}</span>` : ''}</div>
+      ${p ? `${p.level ? `<p class="profile-level">${mdInline(p.level)}</p>` : ''}${p.summary ? `<div class="md muted-md">${md(p.summary)}</div>` : ''}
+      <div class="profile-chips">${p.strengths.length ? `<div><h4>Strong</h4>${chips(p.strengths, 'good')}</div>` : ''}${p.gaps.length ? `<div><h4>Working on</h4>${chips(p.gaps, 'gap')}</div>` : ''}${p.patterns.length ? `<div><h4>Watch for</h4>${chips(p.patterns, 'pattern')}</div>` : ''}</div>` : '<p class="muted">Building your profile from your latest results…</p>'}
+      ${updates.length ? `<div class="timeline"><h4>How your tutor has adapted</h4>${updates.map((u) => `<a class="timeline-row" href="${u.href}"><span class="tl-dot${u.planChanged ? ' changed' : ''}"></span><span class="tl-body"><strong>${esc(u.source)}</strong><span>${mdInline(u.headline)}</span>${u.planChanged ? `<em>🔄 Plan adapted: ${mdInline(u.planNote)}</em>` : ''}</span><small>${timeAgo(u.at)}</small></a>`).join('')}</div>` : ''}
+    </section>`;
   }
   const scoreClass = (r) => (r >= 0.8 ? 'good' : r >= 0.5 ? 'ok' : 'low');
 
@@ -880,12 +983,17 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
       <header class="page-hero"><span class="eyebrow">Learning plan · ${p.done} of ${p.total} complete</span><h1>${esc(nb.plan.title)}</h1>${nb.plan.overview ? `<div class="lead md">${md(nb.plan.overview)}</div>` : ''}
         <div class="progress lg"><i style="width:${p.pct}%"></i></div>
         <div class="hero-actions"><button type="button" class="btn btn-ghost" data-action="regenerate-plan">↻ Regenerate plan</button></div></header>
+      ${jobs[`adapt:${nb.id}`] ? '<div class="adapt-banner working"><span class="spinner sm"></span><div><strong>Your tutor is adapting this plan…</strong><p>Using your latest results. Lessons you haven’t started may change.</p></div></div>' : ''}
+      ${(() => { const u = (nb.updates || []).find((x) => x.planChanged); return u && !jobs[`adapt:${nb.id}`] ? `<div class="adapt-banner"><span class="adapt-icon" aria-hidden="true">🔄</span><div><strong>Adapted ${timeAgo(u.at).toLowerCase()} after ${esc(u.source)}</strong><p>${mdInline(u.planNote)}</p></div></div>` : ''; })()}
       <ol class="lesson-list">${nb.plan.lessons.map((l, i) => {
         const session = chats.find((c) => c.lessonId === l.id);
-        return `<li class="lesson${l.done ? ' done' : ''}">
+        const badge = !l.done && !session && l.badge ? `<span class="lesson-badge ${l.badge}">${l.badge === 'new' ? 'New for you' : 'Updated'}</span>` : '';
+        return `<li class="lesson${l.done ? ' done' : ''}${badge ? ' adapted' : ''}">
           <button type="button" class="lesson-check" data-action="toggle-lesson" data-id="${l.id}" aria-pressed="${l.done}" aria-label="${l.done ? 'Mark lesson as not done' : 'Mark lesson complete'}">${l.done ? '✓' : i + 1}</button>
-          <div class="lesson-body"><div class="lesson-meta"><span>Lesson ${i + 1}</span><span>~${l.minutes} min</span>${l.done ? '<span class="done-tag">Completed</span>' : ''}</div>
+          <div class="lesson-body"><div class="lesson-meta"><span>Lesson ${i + 1}</span><span>~${l.minutes} min</span>${l.done ? '<span class="done-tag">Completed</span>' : ''}${badge}</div>
             <h3>${esc(l.title)}</h3><p>${esc(l.summary)}</p>
+            ${!l.done && l.reason && badge ? `<p class="lesson-reason">↳ ${mdInline(l.reason)}</p>` : ''}
+            ${l.done && jobs[`debrief:${l.id}`] ? '<p class="lesson-debrief working"><span class="spinner sm"></span> Your tutor is reviewing this lesson…</p>' : l.done && l.debrief ? `<p class="lesson-debrief"><strong>Tutor’s note:</strong> ${mdInline(l.debrief.headline)}</p>` : ''}
             ${l.objectives.length ? `<ul class="objectives">${l.objectives.map((o) => `<li>${mdInline(o)}</li>`).join('')}</ul>` : ''}
             <div class="lesson-actions"><button type="button" class="btn ${l.done ? 'btn-soft' : 'btn-primary'}" data-action="start-lesson" data-id="${l.id}">${session ? (l.done ? 'Review lesson' : 'Continue lesson') : 'Start lesson'} →</button>
               <button type="button" class="btn btn-ghost" data-action="lesson-quiz" data-id="${l.id}">Quiz me on this</button></div></div></li>`;
@@ -954,7 +1062,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     }
     const a = quiz.attempts[quiz.attempts.length - 1], ratio = a.score / a.total;
     const missed = quiz.questions.map((q, i) => ({ q, i, mine: a.answers[i] })).filter((x) => x.mine !== x.q.answer);
-    const assessing = quiz.kind === 'diagnostic' && !!jobs[`assess:${quiz.id}`];
+    const assessing = !!jobs[`assess:${quiz.id}`];
     const confs = a.confidence || [];
     const sureWrong = quiz.questions.filter((q, i) => confs[i] === 'certain' && a.answers[i] !== q.answer).length;
     const luckyRight = quiz.questions.filter((q, i) => confs[i] === 'guess' && a.answers[i] === q.answer).length;
@@ -962,8 +1070,8 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     el.view.innerHTML = `<div class="page narrow quiz-page">
       <div class="quiz-top"><a class="btn btn-ghost btn-sm" href="#/nb/${nb.id}/quizzes">← Quizzes</a><span class="muted">${plural(quiz.attempts.length, 'attempt')}</span></div>
       <div class="card result-card ${scoreClass(ratio)}"><span class="eyebrow">${esc(quiz.title)}</span><div class="result-score" data-score="${a.score}">${a.score}<small>/${a.total}</small></div>${confNote}
-        ${quiz.kind === 'diagnostic' ? assessmentHtml(nb, quiz, a) : ''}
-        <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? 'Your tutor uses these results in your sessions.' : 'Next, let’s turn this into a plan made for you.') : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
+        ${assessmentHtml(nb, quiz, a)}
+        <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? '' : 'Next, let’s turn this into a plan made for you.') : a.assessment || assessing ? '' : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
         <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button></div></div>
       <h2 class="section-title">Review</h2>
       <ol class="review-list">${quiz.questions.map((q, i) => { const ok = a.answers[i] === q.answer; return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div>${confs[i] ? `<span class="conf-tag conf-${confs[i]}">${CONFIDENCE[confs[i]]}</span>` : ''}</div>
@@ -983,7 +1091,9 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
   }
   function toggleLesson(nb, lessonId) {
     const l = nb.plan?.lessons.find((x) => x.id === lessonId); if (!l) return;
-    l.done = !l.done; l.doneAt = l.done ? Date.now() : 0; if (l.done) flash = { type: 'lesson', id: l.id }; nb.updatedAt = Date.now(); if (l.done) nb.lastStudiedAt = Date.now(); save();
+    l.done = !l.done; l.doneAt = l.done ? Date.now() : 0; if (l.done) flash = { type: 'lesson', id: l.id };
+    const session = l.done && chats.find((c) => c.lessonId === l.id && c.notebookId === nb.id);
+    if (session && session.messages.filter((m) => m.role === 'user').length >= 2) setTimeout(() => adaptAfter(nb, { type: 'lesson', lesson: l, index: nb.plan.lessons.indexOf(l), chat: session }), 0); nb.updatedAt = Date.now(); if (l.done) nb.lastStudiedAt = Date.now(); save();
     if (l.done) toast(nbProgress(nb).done === nbProgress(nb).total ? 'Plan complete! Amazing work. 🎉' : 'Lesson complete. Nice work! ✓');
     render(true);
   }
@@ -1014,7 +1124,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
     },
     'wiz-next': (t) => { const form = t.closest('form'); const step = Number(form.dataset.step); if (validateStep(form, step)) wizardStep(form, step + 1); },
     'wiz-back': (t) => { const form = t.closest('form'); wizardStep(form, Number(form.dataset.step) - 1); },
-    'retry-assessment': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (quiz) assessDiagnostic(nb, quiz); },
+    'retry-assessment': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (quiz?.attempts.length) adaptAfter(nb, { type: 'quiz', quiz, attempt: quiz.attempts[quiz.attempts.length - 1] }); },
     'plan-from-diagnostic': () => { const nb = currentNb(); if (!nb) return; go(`#/nb/${nb.id}/plan`); generatePlan(nb); },
     'generate-plan': () => { const nb = currentNb(); if (nb) generatePlan(nb); },
     'regenerate-plan': () => {
@@ -1056,7 +1166,7 @@ Mix question types (concepts, applying ideas, common misconceptions). Vary which
         quiz.attempts.push({ at: Date.now(), answers, confidence: quiz.progress.confidence || [], total: quiz.questions.length, score: answers.filter((a, i) => a === quiz.questions[i].answer).length });
         quiz.progress = null;
         save(); render(true);
-        if (quiz.kind === 'diagnostic') assessDiagnostic(nb, quiz);
+        adaptAfter(nb, { type: 'quiz', quiz, attempt: quiz.attempts[quiz.attempts.length - 1] });
         return;
       }
       save(); render(true);
