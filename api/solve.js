@@ -1,11 +1,5 @@
-import { decide, decisionsKey } from './_decisions.js';
 // Vercel serverless API for EduCator. Messages may include image/PDF inline data or text-file data URLs.
-const ALLOWED_ORIGINS = new Set([
-  'https://katznleo-ops.github.io',
-  'https://bio-content-ai.vercel.app',
-  'https://bio-content-ai-revised.vercel.app',
-  ...(process.env.EXTRA_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean)
-]);
+import { ALLOWED_ORIGINS, decide, decisionsKey } from './_decisions.js';
 const COMMIT = (process.env.VERCEL_GIT_COMMIT_SHA || 'unknown').slice(0, 12);
 const MAX_MESSAGES = 30;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -31,7 +25,7 @@ const SYSTEM_PROMPT=[
 'FORMAT: Use Markdown: short paragraphs, ## headings only for longer explanations, numbered steps, **bold** for key terms, and tables when comparing things. Write math in LaTeX with $...$ inline and $$...$$ for displayed equations. Use $ only around real math (numbers, variables, equations), never for emphasis or to italicize words; use **bold** or *italics* for that. Put any words inside math in \\text{...}, for example $\\text{speed} = \\frac{\\text{distance}}{\\text{time}}$. Write money as \\$5 or "5 dollars". When a picture would really help (a process, cycle, timeline, or relationships between ideas), add one small Mermaid diagram in a ```mermaid code block (flowchart TD/LR or timeline, at most about 10 nodes, short labels, no math or special characters in labels). Keep answers focused.'
 ].join('\n');
 const JSON_PROMPT='You are EduCator, an expert curriculum designer and tutor. You generate structured study materials (learning plans, lessons, quizzes) for a learner. Respond ONLY with a single valid JSON object that matches the shape requested by the user message. Do not wrap it in code fences or add commentary. String values may use Markdown, and math must use LaTeX with $...$ (escape backslashes correctly for JSON). Make content accurate, well-ordered, and matched to the learner\'s level.';
-const MAX_CONTEXT_LENGTH = 6000;
+const MAX_CONTEXT_LENGTH = 12000;
 const ALLOWED_MIME = new Set(['image/jpeg','image/png','image/webp','image/gif','application/pdf','text/plain','text/markdown','text/csv']);
 function send(res,status,body){res.setHeader('X-EduCator-Commit',COMMIT);return res.status(status).json(body)}
 function parseAttachment(file,budget){

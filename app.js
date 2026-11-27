@@ -9,8 +9,12 @@
 //   #/nb/:id/quizzes        quizzes
 //   #/nb/:id/sessions       notebook chat sessions
 //   #/nb/:id/settings       edit / delete notebook
+//   #/nb/:id/review         warm-ups, mistake log, flashcards
+//   #/nb/:id/materials      class materials
+//   #/nb/:id/report         progress report
 //   #/nb/:id/chat/:chatId   notebook chat session (private to the notebook)
 //   #/nb/:id/quiz/:quizId   take / review a quiz
+//   #/nb/:id/cards/:deckId  study a flashcard deck
 (() => {
   'use strict';
 
@@ -57,7 +61,6 @@
     concise: 'Keep explanations short and direct, then go straight to a question or task.'
   };
   const DIFFICULTIES = { easier: 'Easier', matched: 'Just right', challenge: 'Challenge me' };
-  // The original pastel subject cards; each opens a pre-filled notebook form.
   // The pastel subject cards. They only pick a subject area: the learner fills in the rest.
   const TEMPLATES = {
     math: { tint: 'math', glyph: '∑', title: 'Math & numbers', caption: 'Make tricky ideas click', icon: '📐', color: 'violet', placeholder: 'e.g. Algebra 1, Geometry, Calculus' },
@@ -161,7 +164,7 @@
     const s = lessonSession(nb, l.id), n = s ? s.messages.filter((m) => m.role === 'user').length : 0;
     const objs = s?.objectives?.length === l.objectives.length ? s.objectives : null;
     const objShown = objs ? objs.filter((o) => o.score >= OBJ_MOSTLY).length : 0;
-    const objAllMostly = !!objs && objShown === objs.length, objAllPartly = !!objs && objs.every((o) => o.score >= OBJ_PARTLY);
+    const objAllMostly = !!objs && objShown === objs.length;
     const tutorReady = !!s?.readyForQuiz;
     // With the Decisions API on, only its objective checks unlock the quiz (every objective mostly shown).
     // Without it, fall back to exchanges plus the tutor's own signal.
@@ -496,8 +499,8 @@
     for (let i = 0; i < 3; i++) t = t.replace(/\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}/g, ' $1 over $2 ').replace(/\\sqrt\{([^{}]*)\}/g, ' the square root of $1 ').replace(/\\(?:text|mathrm|textbf|operatorname)\{([^{}]*)\}/g, ' $1 ');
     return t.replace(/\^\{?2\}?/g, ' squared ').replace(/\^\{?3\}?/g, ' cubed ').replace(/\^\{([^{}]*)\}|\^(\w)/g, (m, a, b) => ` to the power of ${a || b} `)
       .replace(/_\{([^{}]*)\}|_(\w)/g, (m, a, b) => ` sub ${a || b} `)
-      .replace(/\\times|\\cdot/g, ' times ').replace(/\\div/g, ' divided by ').replace(/\\pm/g, ' plus or minus ').replace(/\\leq?/g, ' is less than or equal to ').replace(/\\geq?/g, ' is greater than or equal to ')
-      .replace(/\\neq?/g, ' is not equal to ').replace(/\\approx/g, ' is approximately ').replace(/\\(?:to|rightarrow|Rightarrow)/g, ' gives ').replace(/\\(pi|theta|alpha|beta|gamma|delta|lambda|mu|sigma|omega|Delta)/g, ' $1 ')
+      .replace(/\\times|\\cdot/g, ' times ').replace(/\\div/g, ' divided by ').replace(/\\pm/g, ' plus or minus ').replace(/\\leq?(?![a-zA-Z])/g, ' is less than or equal to ').replace(/\\geq?(?![a-zA-Z])/g, ' is greater than or equal to ')
+      .replace(/\\neq?(?![a-zA-Z])/g, ' is not equal to ').replace(/\\approx/g, ' is approximately ').replace(/\\(?:to|rightarrow|Rightarrow)(?![a-zA-Z])/g, ' gives ').replace(/\\(pi|theta|alpha|beta|gamma|delta|lambda|mu|sigma|omega|Delta)/g, ' $1 ')
       .replace(/\\[a-zA-Z]+/g, ' ').replace(/=/g, ' equals ').replace(/\+/g, ' plus ').replace(/(\s)-(\s)|^-/g, '$1 minus $2').replace(/</g, ' is less than ').replace(/>/g, ' is greater than ').replace(/[{}\\]/g, ' ');
   }
   function speechText(markdown) {
@@ -708,7 +711,9 @@
       const st = lessonState(nb, lesson.lesson);
       lines.push(`This session is Lesson ${lesson.index + 1}: "${lesson.lesson.title}". Summary: ${lesson.lesson.summary} Objectives: ${lesson.lesson.objectives.join('; ')}.${lesson.lesson.reason ? ` This lesson was adapted for them: ${lesson.lesson.reason}` : ''} Teach interactively: explain in small steps, use examples, give practice questions, have them explain ideas back, and check understanding before moving on.
 ${st.objs ? `Automatic check of what they have shown so far: ${lesson.lesson.objectives.map((o, i) => `"${o}": ${st.objs[i].score >= OBJ_MOSTLY ? 'shown' : st.objs[i].score >= OBJ_PARTLY ? 'partly shown' : 'not shown yet'}`).join('; ')}. Focus on the objectives not shown yet.${chat?.objCheck?.copying >= 0.6 ? ' They have mostly been repeating you or asking for answers: ask them to explain and try things themselves.' : ''}${chat?.objCheck?.confused >= 0.65 ? ' They seem confused right now: slow down and use a simpler example.' : ''}
-` : ''}Lesson completion: the learner completes this lesson by working through it with you and then passing a lesson quiz in the app.${decisionsOn ? ' The app unlocks the quiz automatically once it sees they have shown every objective in their own words, so keep giving them chances to show each one (practice questions, explain it back).' : ''} They have sent ${st.n} message${st.n === 1 ? '' : 's'} so far. Keep the lesson going until they have clearly shown they can do every objective; never declare them ready before at least ${READY_EXCHANGES} of their messages. When they are ready, give a short recap, tell them you recommend taking the lesson quiz now (there is a button for it), and put ${READY_TOKEN} alone on the last line.${st.tutorReady ? ' You already told them they are ready; keep helping with anything they ask and remind them to take the quiz.' : ''}`);
+` : ''}Lesson completion: the learner completes this lesson by working through it with you and then passing a lesson quiz in the app.${decisionsOn ? ' The app unlocks the quiz automatically once it sees they have shown every objective in their own words, so keep giving them chances to show each one (practice questions, explain it back).' : ''} They have sent ${st.n} message${st.n === 1 ? '' : 's'} so far. Keep the lesson going until they have clearly shown they can do every objective.${decisionsOn
+  ? (st.ready ? ' The app has now unlocked the lesson quiz: give a short recap and recommend they take it now (there is a button at the top).' : ' Do not tell them they are ready or to take the quiz yet; the app unlocks it and will let them know.')
+  : ` Never declare them ready before at least ${READY_EXCHANGES} of their messages. When they are ready, give a short recap, tell them you recommend taking the lesson quiz now (there is a button for it), and put ${READY_TOKEN} alone on the last line.${st.tutorReady ? ' You already told them they are ready; keep helping with anything they ask and remind them to take the quiz.' : ''}`}`);
     }
     const mastered = allObjectives(nb).filter((o) => (masteryOf(nb, o.lessonId, o.i) ?? 0) >= OBJ_MOSTLY).map((o) => o.text).slice(0, 15);
     if (mastered.length) lines.push(`Plan objectives they have already demonstrated (do not re-teach unless asked): ${mastered.join('; ')}.`);
@@ -720,7 +725,7 @@ If their question is covered by a lesson they have not finished, answer briefly,
     }
     lines.push(`Tools the learner has in this app (recommend the right one by name when it would help, and encourage them to use it): their lessons and lesson quizzes, "Quiz me" (a quiz adapted to their gaps), the Review tab (warm-ups of past mistakes and flashcards), uploading class materials, the progress report, the "Stuck?" hint buttons under your replies, Listen (read aloud), Speak (voice input), and the explanation-style setting.`);
     if (styleLine()) lines.push(styleLine());
-    return lines.join('\n').slice(0, 5800);
+    return lines.join('\n').slice(0, 11500);
   }
 
   // Models often write LaTeX inside JSON strings without doubling the backslash, so "\\frac" arrives as a
@@ -772,15 +777,16 @@ If their question is covered by a lesson they have not finished, answer briefly,
 
   // ---------- Adaptive tutoring ----------
   // Every notebook keeps a learner profile (level, strengths, gaps, mistake patterns). After every quiz,
-  // diagnostic, and completed lesson, ONE request reviews what happened, updates the profile, and rewrites
-  // the lessons the learner hasn't started yet. Completed lessons never change.
+  // diagnostic, meaningful free-form session, and class-material upload, ONE request reviews what happened,
+  // updates the profile, and rewrites the lessons the learner hasn't started. Completed lessons never change,
+  // and lessons already in progress keep their objectives.
   const listOf = (v, n, max = 240) => (Array.isArray(v) ? v : []).map((x) => str(x, max)).filter(Boolean).slice(0, n);
   function profileText(p) {
     if (!p) return '';
     return [p.level ? `Current level: ${p.level}` : '', p.summary, p.strengths.length ? `Strengths: ${p.strengths.join('; ')}` : '', p.gaps.length ? `Gaps (most important first): ${p.gaps.join('; ')}` : '', p.patterns.length ? `Mistake patterns: ${p.patterns.join('; ')}` : ''].filter(Boolean).join('\n');
   }
   function planListing(nb) {
-    return nb.plan.lessons.map((l, i) => `- id ${l.id} | ${l.done ? 'COMPLETED' : 'not started'} | Lesson ${i + 1}: ${l.title}. ${oneLine(l.summary, 160)} Objectives: ${l.objectives.join('; ')} (${l.minutes} min)`).join('\n');
+    return nb.plan.lessons.map((l, i) => `- id ${l.id} | ${l.done ? 'COMPLETED' : lessonSession(nb, l.id) ? 'IN PROGRESS (keep its title and objectives)' : 'not started'} | Lesson ${i + 1}: ${l.title}. ${oneLine(l.summary, 160)} Objectives: ${l.objectives.join('; ')} (${l.minutes} min)`).join('\n');
   }
   function lessonTranscript(chat, max = 3600) {
     return chat.messages.filter((m) => !m.error).slice(-30).map((m) => `${m.role === 'assistant' ? 'Tutor' : 'Me'}: ${oneLine(m.text, 600)}`).join('\n').slice(-max);
@@ -799,6 +805,12 @@ If their question is covered by a lesson they have not finished, answer briefly,
       const session = lesson && lessonSession(nb, lesson.id);
       if (session) parts.push(`Our lesson session for "${lesson.title}" (most recent part):\n${lessonTranscript(session)}`);
       if (quiz.kind === 'final') { const first = diagnosticSummary(nb); if (first) parts.push(`For comparison, my first diagnostic: ${first.attempt.score}/${first.attempt.total}. ${first.assessment ? `Your take back then: ${first.assessment.headline}` : ''}`); }
+    } else if (event.type === 'material') {
+      const m = event.material, covered = new Set(m.covers || []);
+      const objs = allObjectives(nb), inClass = objs.filter((o) => covered.has(`${o.lessonId}:${o.i}`)), notInClass = objs.filter((o) => !covered.has(`${o.lessonId}:${o.i}`) && !o.lesson.done);
+      parts.push(`NEW EVENT: I uploaded class material "${m.title}" (${m.name}). Study notes from it:\n${m.summary}\nTopics: ${m.topics.join(', ')}`);
+      if (decisionsOn && objs.length) parts.push(`Automatic check of my plan against this material:\n- Covered by the material: ${inClass.map((o) => o.text).join('; ') || 'nothing yet'}\n- In my plan but not in the material: ${notInClass.map((o) => o.text).join('; ') || 'nothing'}`);
+      parts.push('Adapt my upcoming lessons to follow my class: use its terms and notation, follow its order, add lessons or objectives for topics the class covers that my plan is missing, and spend less time on plan topics the class does not cover (unless they are gaps I need). In your feedback, tell me how this material fits with what I have learned so far.');
     } else if (event.type === 'session') {
       parts.push(`NEW EVENT: I had a free-form study session with you ("${event.chat.title}"). Here is our conversation:\n${lessonTranscript(event.chat, 7000)}`);
       if (event.signals?.length) parts.push(`Automatic checks on this session found:\n${event.signals.map((x) => `- ${x}`).join('\n')}`);
@@ -812,8 +824,8 @@ If their question is covered by a lesson they have not finished, answer briefly,
 - Be honest, specific, warm, and encouraging. Speak directly to me. Describe skills and concepts; do not just list questions. Use $...$ only for real math.`);
     const planShape = nb.plan ? `, "plan": {"changed": boolean, "note": string (1-2 sentences to me: what you changed and why, or why the plan still fits), "changes": [0-4 short strings, one per change], "upcoming": [every lesson I have NOT completed, in the new order: {"id": string (an existing id, or "new"), "title": string, "summary": string, "objectives": [3-4 strings], "minutes": number, "reason": string (why it was added or changed; "" if unchanged)}]}` : '';
     parts.push(`Return JSON with exactly this shape:
-{"headline": string (one sentence on where I am now), "summary": string (2-4 sentences of feedback on this ${isQuiz ? 'quiz' : event.type === 'session' ? 'study session' : 'lesson'}, compared with before)${isDiag ? ', "selfReport": "matches" | "partly" | "differs"' : ''}, "strengths": [1-3 strings], "gaps": [0-4 strings], "patterns": [0-3 strings]${nb.plan ? '' : ', "startingPoint": string (one sentence on where my learning plan should start)'}${isQuiz && event.quiz.lessonId && lessonSession(nb, event.quiz.lessonId) ? ', "recap": [3-5 key takeaways from this lesson, as short notes I can review later]' : ''}${isQuiz && event.quiz.kind === 'final' ? ', "comparison": string (2-3 sentences comparing where I am now with my first diagnostic)' : ''}, "profile": {"level": string (one line on my current level), "summary": string (2-3 sentences, cumulative across everything so far), "strengths": [up to 5], "gaps": [up to 5, most important first], "patterns": [up to 4]}${planShape}}${nb.plan ? `
-Plan rules: never include or change completed lessons. Adapt the not-started lessons to my current level: add a focused lesson or short review for a new or persistent gap, add objectives that target my mistake patterns, shorten or merge lessons on things I have clearly mastered, and reorder if that helps. Keep 3 to 10 upcoming lessons. If nothing needs to change, set "changed": false and return the upcoming lessons as they are.` : ''}`);
+{"headline": string (one sentence on where I am now), "summary": string (2-4 sentences of feedback on this ${isQuiz ? 'quiz' : event.type === 'session' ? 'study session' : event.type === 'material' ? 'class material and how it fits my plan' : 'lesson'}, compared with before)${isDiag ? ', "selfReport": "matches" | "partly" | "differs"' : ''}, "strengths": [1-3 strings], "gaps": [0-4 strings], "patterns": [0-3 strings]${nb.plan ? '' : ', "startingPoint": string (one sentence on where my learning plan should start)'}${isQuiz && event.quiz.lessonId && lessonSession(nb, event.quiz.lessonId) ? ', "recap": [3-5 key takeaways from this lesson, as short notes I can review later]' : ''}${isQuiz && event.quiz.kind === 'final' ? ', "comparison": string (2-3 sentences comparing where I am now with my first diagnostic)' : ''}, "profile": {"level": string (one line on my current level), "summary": string (2-3 sentences, cumulative across everything so far), "strengths": [up to 5], "gaps": [up to 5, most important first], "patterns": [up to 4]}${planShape}}${nb.plan ? `
+Plan rules: never include or change completed lessons. Keep lessons marked IN PROGRESS in the list with the same id, title, and objectives. Adapt the not-started lessons to my current level: add a focused lesson or short review for a new or persistent gap, add objectives that target my mistake patterns, shorten or merge lessons on things I have clearly mastered, and reorder if that helps. Keep 3 to 10 upcoming lessons. If nothing needs to change, set "changed": false and return the upcoming lessons as they are.` : ''}`);
     return parts.join('\n\n');
   }
   function normalizeAssessment(d) {
@@ -836,6 +848,8 @@ Plan rules: never include or change completed lessons. Adapt the not-started les
     const old = nb.plan, byId = new Map(old.lessons.map((l) => [l.id, l])), now = Date.now();
     const upcoming = update.upcoming.map((u) => {
       const prev = byId.get(u.id);
+      // A lesson the learner is partway through keeps its title and objectives (its progress is tied to them).
+      if (prev && !prev.done && lessonSession(nb, prev.id)) return { ...prev, minutes: u.minutes };
       if (prev && !prev.done) {
         const changed = prev.title !== u.title || prev.summary !== u.summary || prev.objectives.join('|') !== u.objectives.join('|');
         return { ...prev, title: u.title, summary: u.summary || prev.summary, objectives: u.objectives.length ? u.objectives : prev.objectives, minutes: u.minutes, ...(changed ? { reason: u.reason || 'Adjusted to your latest results.', badge: prev.badge === 'new' ? 'new' : 'updated', badgeAt: now } : {}) };
@@ -843,29 +857,45 @@ Plan rules: never include or change completed lessons. Adapt the not-started les
       return { id: uid(), title: u.title, summary: u.summary, objectives: u.objectives, minutes: u.minutes, done: false, doneAt: 0, reason: u.reason || 'Added for you based on your latest results.', badge: 'new', badgeAt: now };
     });
     if (!upcoming.length) return false;
+    // Never drop a lesson in progress, even if the update left it out.
+    const kept = new Set(upcoming.map((l) => l.id));
+    old.lessons.filter((l) => !l.done && lessonSession(nb, l.id) && !kept.has(l.id)).reverse().forEach((l) => upcoming.unshift(l));
     nb.plan = { ...old, lessons: [...old.lessons.filter((l) => l.done), ...upcoming], adaptedAt: now };
     return true;
+  }
+  // Compare diagnostic results with what the learner said they struggle with (Decisions API).
+  async function decideSelfReport(nb, quiz, attempt) {
+    if (!decisionsOn || !nb.struggles) return null;
+    try {
+      const a = await decide([{ type: 'text', text: `What the student said they struggle with: ${nb.struggles}\nGrade/level: ${gradeLabel(nb) || 'not given'}\n\nTheir diagnostic results, question by question:\n${diagnosticDetail(quiz, attempt)}` }], {
+        match: { type: 'choice', instructions: 'Do the diagnostic results match what the student said they struggle with?', criteria: { matches: 'Yes: their mistakes are mostly in the areas they named.', partly: 'Partly: some mistakes are where they said, others are elsewhere (or they did well in a named area).', differs: 'No: their real gaps are mostly somewhere other than what they named.' } }
+      });
+      return a.match?.confidence >= 0.5 ? a.match.choice : null;
+    } catch { return null; }
   }
   // Adaptations for one notebook run one at a time, so each builds on the last.
   const adaptQueue = {};
   function adaptAfter(nb, event) {
-    const key = event.type === 'quiz' ? `assess:${event.quiz.id}` : event.type === 'session' ? `sessadapt:${event.chat.id}` : `debrief:${event.lesson.id}`;
+    const key = event.type === 'quiz' ? `assess:${event.quiz.id}` : event.type === 'session' ? `sessadapt:${event.chat.id}` : event.type === 'material' ? `matadapt:${event.material.id}` : `debrief:${event.lesson.id}`;
     if (jobs[key]) return;
     jobs[key] = true; jobs[`adapt:${nb.id}`] = (jobs[`adapt:${nb.id}`] || 0) + 1; delete jobErrors[key]; refreshIf(nb.id);
     adaptQueue[nb.id] = (adaptQueue[nb.id] || Promise.resolve()).then(async () => {
       try {
-        const result = normalizeAdapt(await generateJSON(adaptPrompt(nb, event), ''), !!nb.plan);
+        const isDiag = event.type === 'quiz' && event.quiz.kind === 'diagnostic';
+        const [raw, selfReport] = await Promise.all([generateJSON(adaptPrompt(nb, event), ''), isDiag ? decideSelfReport(nb, event.quiz, event.attempt) : null]);
+        const result = normalizeAdapt(raw, !!nb.plan);
+        if (result && selfReport) result.assessment.selfReport = selfReport;
         if (!result) throw new Error('Your tutor could not review this. Please try again.');
         const { assessment, profile, plan } = result;
         let planChanged = false;
         if (plan) { assessment.planNote = plan.note; if (plan.changed) planChanged = applyPlanUpdate(nb, plan); assessment.planChanges = planChanged ? plan.changes : []; }
         assessment.planChanged = planChanged;
-        if (event.type === 'quiz') event.attempt.assessment = assessment; else if (event.type === 'session') event.chat.debrief = assessment; else event.lesson.debrief = assessment;
+        if (event.type === 'quiz') event.attempt.assessment = assessment; else if (event.type === 'session') event.chat.debrief = assessment; else if (event.type === 'material') event.material.adaptation = assessment; else event.lesson.debrief = assessment;
         const recapLesson = event.type === 'quiz' && event.quiz.lessonId && nb.plan?.lessons.find((l) => l.id === event.quiz.lessonId);
         if (recapLesson && assessment.recap.length) recapLesson.recap = assessment.recap;
         if (profile) nb.profile = profile;
-        const source = event.type === 'quiz' ? (event.quiz.kind === 'diagnostic' ? 'Diagnostic' : `Quiz · ${event.quiz.title}`) : event.type === 'session' ? `Session · ${event.chat.title}` : `Lesson · ${event.lesson.title}`;
-        (nb.updates ||= []).unshift({ id: uid(), at: Date.now(), source, headline: assessment.headline, planChanged, planNote: planChanged ? plan.note : '', href: event.type === 'quiz' ? `#/nb/${nb.id}/quiz/${event.quiz.id}` : event.type === 'session' ? `#/nb/${nb.id}/chat/${event.chat.id}` : `#/nb/${nb.id}/plan` });
+        const source = event.type === 'quiz' ? (event.quiz.kind === 'diagnostic' ? 'Diagnostic' : `Quiz · ${event.quiz.title}`) : event.type === 'session' ? `Session · ${event.chat.title}` : event.type === 'material' ? `Class material · ${event.material.title}` : `Lesson · ${event.lesson.title}`;
+        (nb.updates ||= []).unshift({ id: uid(), at: Date.now(), source, headline: assessment.headline, planChanged, planNote: planChanged ? plan.note : '', href: event.type === 'quiz' ? `#/nb/${nb.id}/quiz/${event.quiz.id}` : event.type === 'session' ? `#/nb/${nb.id}/chat/${event.chat.id}` : event.type === 'material' ? `#/nb/${nb.id}/materials` : `#/nb/${nb.id}/plan` });
         nb.updates = nb.updates.slice(0, 30); nb.updatedAt = Date.now(); save();
         tagMistakes(nb);
         if (planChanged && (nb.materials || []).length) coverMaterials(nb);
@@ -888,7 +918,7 @@ Goal: ${nb.goal || `Build a solid understanding of ${nb.name}.`}
 Time I can study: ${PACES[nb.pace]}${nb.deadline ? `\nI'm working toward: ${nb.deadline}` : ''}
 ${d ? `Diagnostic result: ${d.attempt.score}/${d.attempt.total}. Question by question (ordered roughly from easier to harder):\n${diagnosticDetail(d.quiz, d.attempt)}${d.assessment ? `\n\n${assessmentText(d.assessment)}` : ''}` : 'No diagnostic taken yet.'}${nb.profile ? `\n\nWhat my tutor currently knows about me:\n${profileText(nb.profile)}` : ''}
 
-Return JSON with exactly this shape:
+${(nb.materials || []).length ? `My class materials (follow their order, terms, and emphasis, and cover what they cover):\n${nb.materials.map((m) => `- ${m.title}: ${m.topics.join(', ')}. ${oneLine(m.summary, 500)}`).join('\n')}\n\n` : ''}Return JSON with exactly this shape:
 {"title": string, "overview": string (2-3 sentences explaining the approach), "lessons": [{"title": string, "summary": string (1-2 sentences), "objectives": [3-4 short strings], "minutes": number (estimated study time)}]}
 Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
 - Start where my diagnostic shows my understanding breaks down, not at the very beginning. Shorten or combine topics I clearly already know into a quick review.
@@ -913,9 +943,10 @@ Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
     try {
       const plan = normalizePlan(await generateJSON(planPrompt(nb), notebookContext({ ...nb, plan: null })));
       if (!plan) throw new Error('The plan came back incomplete. Please try again.');
-      // Keep completion state for lessons whose titles match the previous plan.
-      const doneTitles = new Set((nb.plan?.lessons || []).filter((l) => l.done).map((l) => l.title.toLowerCase()));
-      plan.lessons.forEach((l) => { if (doneTitles.has(l.title.toLowerCase())) { l.done = true; l.doneAt = Date.now(); } });
+      // Lessons with the same title as before keep their id (so lesson chats, quizzes, and mastery stay linked)
+      // and their completion state.
+      const oldByTitle = new Map((nb.plan?.lessons || []).map((l) => [l.title.toLowerCase(), l]));
+      plan.lessons = plan.lessons.map((l) => { const o = oldByTitle.get(l.title.toLowerCase()); return o ? { ...l, id: o.id, done: o.done, doneAt: o.doneAt, recap: o.recap, objectives: lessonSession(nb, o.id) && !o.done ? o.objectives : l.objectives } : l; });
       nb.plan = plan; nb.updatedAt = Date.now(); save();
       toast(`Your ${nb.name} learning plan is ready.`);
       if ((nb.materials || []).length) coverMaterials(nb);
@@ -923,6 +954,26 @@ Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
     finally { delete jobs[key]; refreshIf(nb.id); }
   }
 
+  // What a quiz has to cover: every objective of a lesson quiz; every lesson for a final check; the most
+  // recent completed lessons for a review quiz.
+  function coverageTargets(nb, { lessonId, kind, count }) {
+    const lesson = lessonId && nb.plan?.lessons.find((l) => l.id === lessonId);
+    if (lesson) return lesson.objectives.map((o) => o);
+    if (kind === 'final') return (nb.plan?.lessons || []).map((l) => `${l.title} (${l.objectives.join('; ')})`).slice(0, count);
+    if (kind === 'quiz') return (nb.plan?.lessons || []).filter((l) => l.done).slice(-count).map((l) => `${l.title} (${l.objectives.join('; ')})`);
+    return [];
+  }
+  // Questions the learner has already seen, so new quizzes don't repeat them.
+  function askedBefore(nb, { lessonId }) {
+    const pool = nb.quizzes.filter((q) => (lessonId ? q.lessonId === lessonId : q.kind !== 'review')).flatMap((q) => q.questions.map((x) => oneLine(x.question, 200)));
+    return [...new Set(pool)].slice(0, lessonId ? 60 : 40);
+  }
+  // What was actually worked on in the lesson session, so the quiz tests it.
+  function sessionCoverage(nb, lessonId) {
+    const s = lessonId && lessonSession(nb, lessonId); if (!s) return '';
+    if (s.brief?.covered?.length && s.brief.n === s.messages.filter((m) => m.role === 'user').length) return s.brief.covered.map((c) => `- ${c}`).join('\n');
+    return lessonTranscript(s, 3000);
+  }
   function quizPrompt(nb, { lessonId, count, difficulty, kind }) {
     const lesson = nb.plan?.lessons.find((l) => l.id === lessonId);
     const scope = kind === 'diagnostic'
@@ -934,28 +985,40 @@ Use 6 to 10 lessons, ordered from foundations to mastery.${d ? `
 Number of questions: ${count}. Difficulty: ${DIFFICULTIES[difficulty] || 'Just right'} for my level.
 Return JSON with exactly this shape:
 {"title": string (short), "questions": [{"question": string, "choices": [4 strings], "answer": number (0-based index of the single correct choice), "explanation": string (1-3 sentences on why the answer is right)}]}
-Mix question types (concepts, applying ideas, common misconceptions). Vary which position holds the correct answer. Avoid "all of the above".${decisionsOn ? `
+Mix question types (concepts, applying ideas, common misconceptions). Vary which position holds the correct answer. Avoid "all of the above".${(() => {
+  const targets = coverageTargets(nb, { lessonId, kind, count }), asked = askedBefore(nb, { lessonId }), session = sessionCoverage(nb, lessonId);
+  return `${targets.length ? `
+Cover EVERY one of these, with at least one question each. Add "covers": the item number to each question:
+${targets.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : ''}${session ? `
+Also test what we actually worked on in our lesson session:
+${session}` : ''}${asked.length ? `
+I have already been asked these questions. Write NEW ones: do not reuse, reword, or just change the numbers of any of them:
+${asked.map((q) => `- ${q}`).join('\n')}` : ''}`; })()}${decisionsOn ? `
 Make about one third of the questions short-answer, asking me to explain or apply an idea in my own words. A short-answer question has this shape instead: {"type": "short", "question": string, "rubric": [4 strings describing answers from worst to best], "modelAnswer": string (a complete, ideal answer in 1-3 sentences), "explanation": string}. Give multiple-choice questions "type": "mc".` : ''}${nb.profile && kind !== 'diagnostic' ? `
 Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(0, 3).join('; ') || 'none noted'}), include a question that tests each of my mistake patterns (${nb.profile.patterns.slice(0, 3).join('; ') || 'none noted'}), and keep things I've mastered to a quick check.` : ''}`;
   }
   function normalizeQuiz(data, opts) {
     const questions = (Array.isArray(data?.questions) ? data.questions : []).map((q) => {
-      if (q?.type === 'short') return { type: 'short', question: str(q?.question, 800), rubric: listOf(q?.rubric, 6, 300), modelAnswer: str(q?.modelAnswer, 900), explanation: str(q?.explanation, 800) };
+      const covers = Number.isInteger(Number(q?.covers)) && Number(q?.covers) > 0 ? Number(q.covers) : null;
+      if (q?.type === 'short') return { type: 'short', question: str(q?.question, 800), rubric: listOf(q?.rubric, 6, 300), modelAnswer: str(q?.modelAnswer, 900), explanation: str(q?.explanation, 800), covers };
       const choices = (Array.isArray(q?.choices) ? q.choices : []).map((c) => str(String(c ?? ''), 300)).filter(Boolean).slice(0, 6);
       const answer = Number(q?.answer);
-      return { question: str(q?.question, 800), choices, answer, explanation: str(q?.explanation, 800) };
+      return { question: str(q?.question, 800), choices, answer, explanation: str(q?.explanation, 800), covers };
     }).filter((q) => (q.type === 'short' ? q.question && q.modelAnswer && decisionsOn : q.question && q.choices.length >= 2 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < q.choices.length));
     if (!questions.length) return null;
-    return { id: uid(), title: str(data.title, 100) || (opts.kind === 'diagnostic' ? 'Diagnostic check' : 'Quiz'), kind: opts.kind, lessonId: opts.lessonId || '', difficulty: opts.difficulty, createdAt: Date.now(), questions, attempts: [], progress: { answers: [], revealed: false } };
+    return { id: uid(), title: str(data.title, 100) || (opts.kind === 'diagnostic' ? 'Diagnostic check' : 'Quiz'), kind: opts.kind, lessonId: opts.lessonId || '', difficulty: opts.difficulty, count: opts.count, createdAt: Date.now(), questions, attempts: [], progress: { answers: [], revealed: false } };
   }
   async function generateQuiz(nb, opts) {
     const key = `quiz:${nb.id}`; if (jobs[key]) { toast('A quiz is already being created.'); return; }
     jobs[key] = opts; delete jobErrors[key];
     if (!(route.nbId === nb.id && route.view === 'nb-quizzes')) go(`#/nb/${nb.id}/quizzes`); else render(true);
     try {
+      if (opts.difficulty === 'auto') opts.difficulty = await chooseDifficulty(nb, opts);
       const quiz = normalizeQuiz(await generateJSON(quizPrompt(nb, opts), notebookContext(nb)), opts);
       if (!quiz) throw new Error('The quiz came back incomplete. Please try again.');
-      await verifyQuiz(nb, quiz);
+      const targets = coverageTargets(nb, opts), asked = askedBefore(nb, opts);
+      const { missing } = await verifyQuiz(nb, quiz, targets, asked);
+      if (missing.length) await topUpQuiz(nb, quiz, missing.map((i) => targets[i]), asked);
       nb.quizzes.unshift(quiz); nb.updatedAt = Date.now(); save();
       delete jobs[key];
       if (route.nbId === nb.id && route.view === 'nb-quizzes') go(`#/nb/${nb.id}/quiz/${quiz.id}`); else { toast(`Your quiz "${quiz.title}" is ready.`); refreshIf(nb.id); }
@@ -1078,7 +1141,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
         <div class="next-up-actions"><button type="button" class="btn btn-primary btn-lg" data-action="diagnostic">✦ Start diagnostic</button><button type="button" class="btn btn-ghost" data-action="generate-plan">Skip, build my plan</button></div></div>`;
     }
     const i = nb.plan.lessons.findIndex((l) => !l.done);
-    if (i < 0) return `<div class="card next-up done"><div><span class="eyebrow">Plan complete 🎉</span><h3>You finished every lesson!</h3><p>Lock it in with a final review quiz, or extend your plan with a new goal.</p></div><button type="button" class="btn btn-primary btn-lg" data-action="quick-quiz" data-count="10">Take a final review</button></div>`;
+    if (i < 0) return `<div class="card next-up done"><div><span class="eyebrow">Plan complete 🎉</span><h3>You finished every lesson!</h3><p>Take your final check to see how far you’ve come since your diagnostic.</p></div><button type="button" class="btn btn-primary btn-lg" data-action="final-check">Take the final check</button></div>`;
     const l = nb.plan.lessons[i], existing = chats.find((c) => c.lessonId === l.id);
     return `<div class="card next-up"><div><span class="eyebrow">Up next · Lesson ${i + 1} of ${nb.plan.lessons.length} · ~${l.minutes} min</span><h3>${esc(l.title)}</h3><p>${esc(l.summary)}</p></div>
       <button type="button" class="btn btn-primary btn-lg" data-action="start-lesson" data-id="${l.id}">${existing ? 'Continue lesson →' : 'Start lesson →'}</button></div>`;
@@ -1196,13 +1259,13 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     const lessons = nb.plan?.lessons || [];
     el.view.innerHTML = `<div class="page narrow">
       <header class="page-hero"><span class="eyebrow">Quizzes</span><h1>Test what you <em>know</em></h1><p class="lead">Quizzes are generated for your level and plan. Each answer is explained, and your tutor uses your results to focus future sessions.</p></header>
-      ${job ? `<div class="card next-up loading"><div class="spinner"></div><div><h3>Writing your quiz…</h3><p>Creating ${job.count} questions${job.kind === 'diagnostic' ? ' to check your level' : ''}. This usually takes 10–20 seconds.</p></div></div>` : `
+      ${job ? `<div class="card next-up loading"><div class="spinner"></div><div><h3>Writing your quiz…</h3><p>Creating ${job.count} new questions${job.kind === 'diagnostic' ? ' to check your level' : job.lessonId ? ' covering every objective of the lesson' : ''}, then checking each one. This usually takes 15–30 seconds.</p></div></div>` : `
       <form class="card form quiz-gen" data-form="quiz">
         <h3>New quiz</h3>
         <div class="field-row three">
           <div class="field"><label for="qScope">Topic</label><select id="qScope" name="scope"><option value="">Everything so far</option><option value="diagnostic">Diagnostic (find my level)</option>${nb.plan ? '<option value="final">Final check (measure my progress)</option>' : ''}${lessons.map((l, i) => (l.done || lessonState(nb, l).ready ? `<option value="${l.id}">Lesson ${i + 1}: ${esc(l.title)}</option>` : '')).join('')}</select></div>
           <div class="field"><label for="qCount">Questions</label><select id="qCount" name="count"><option>5</option><option selected>8</option><option>10</option></select></div>
-          <div class="field"><label for="qDiff">Difficulty</label><select id="qDiff" name="difficulty">${Object.entries(DIFFICULTIES).map(([k, v]) => `<option value="${k}"${k === 'matched' ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
+          <div class="field"><label for="qDiff">Difficulty</label><select id="qDiff" name="difficulty"><option value="auto" selected>Let my tutor decide</option>${Object.entries(DIFFICULTIES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
         </div>
         ${jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : ''}
         <div class="form-actions"><button class="btn btn-primary btn-lg" type="submit">✦ Generate quiz</button></div>
@@ -1266,7 +1329,7 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
         ${quiz.kind === 'final' ? beforeAfterHtml(nb, a) : ''}
         ${assessmentHtml(nb, quiz, a)}
         <p class="lead">${quiz.kind === 'diagnostic' ? (assessing ? '' : nb.plan ? '' : 'Next, let’s turn this into a plan made for you.') : a.assessment || assessing ? '' : ratio === 1 ? 'Perfect score! 🎉' : ratio >= 0.8 ? 'Great work. You know this well.' : ratio >= 0.5 ? 'Solid start. Review the misses below.' : 'This is a good topic to revisit with your tutor.'}</p>
-        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}${quiz.kind === 'review' ? '' : '<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ Retake quiz</button>'}</div></div>
+        <div class="form-actions center">${quiz.kind === 'diagnostic' && !nb.plan && !assessing ? '<button type="button" class="btn btn-primary btn-lg" data-action="plan-from-diagnostic">✦ Build my learning plan from these results</button>' : ''}${missed.length ? `<button type="button" class="btn ${quiz.kind === 'diagnostic' && !nb.plan ? 'btn-ghost' : 'btn-primary'} btn-lg" data-action="review-mistakes">Go over my mistakes with the tutor</button>` : ''}${quiz.kind === 'review' ? '' : '<button type="button" class="btn btn-ghost btn-lg" data-action="retake-quiz">↻ New questions</button>'}</div></div>
       ${!assessing ? (() => { const r = coach(nb).filter((x) => !(x.btn.href || '').endsWith(quiz.id))[0]; return r ? `<section class="next-step"><span class="coach-icon" aria-hidden="true">${r.icon}</span><div><span class="eyebrow">I recommend next</span><strong>${esc(r.title)}</strong><small>${mdInline(r.why)}</small></div>${recButton(r)}</section>` : ''; })() : ''}
       <h2 class="section-title">Review</h2>
       <ol class="review-list">${quiz.questions.map((q, i) => { const ok = isRight(q, a.answers[i]); return `<li class="review ${ok ? 'good' : 'bad'}"><div class="review-head"><span>${ok ? '✓' : '✗'}</span><div class="md">${md(q.question)}</div>${confs[i] ? `<span class="conf-tag conf-${confs[i]}">${CONFIDENCE[confs[i]]}</span>` : ''}</div>
@@ -1275,8 +1338,12 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
 
   // ---------- Gemini Decisions API (separate key; every feature falls back gracefully without it) ----------
   const DECIDE_URL = API_URL.replace(/solve$/, 'decide');
-  let decisionsOn = false;
-  async function checkDecisions() { try { const r = await fetch(DECIDE_URL); const d = await r.json(); decisionsOn = !!d.enabled; } catch { decisionsOn = false; } }
+  const KEY_DECISIONS = 'educator.decisions.v1';
+  let decisionsOn = localStorage.getItem(KEY_DECISIONS) === '1';
+  async function checkDecisions() {
+    try { const r = await fetch(DECIDE_URL); const d = await r.json(); decisionsOn = !!d.enabled; } catch { /* offline: keep the last known setting */ }
+    try { localStorage.setItem(KEY_DECISIONS, decisionsOn ? '1' : '0'); } catch {}
+  }
   async function decide(input, questions) {
     const r = await fetch(DECIDE_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input, questions }) });
     const d = await r.json().catch(() => ({}));
@@ -1358,21 +1425,63 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     finally { delete jobs[key]; }
   }
 
-  // Fact-check a generated quiz: every answer key and every "exactly one right option" in one call.
-  async function verifyQuiz(nb, quiz) {
-    if (!decisionsOn) return;
+  // One Decisions call checks a generated quiz: every answer key, "exactly one right option", whether each
+  // required objective/lesson is tested, and whether any question repeats one the learner has already seen.
+  // Returns the indices of coverage targets no question tests.
+  async function verifyQuiz(nb, quiz, targets = [], asked = []) {
+    const localMissing = () => {
+      const tagged = quiz.questions.filter((x) => x.covers).length;
+      if (!targets.length || tagged < quiz.questions.length / 2) return [];
+      const hit = new Set(quiz.questions.map((x) => x.covers));
+      return targets.map((t, k) => k).filter((k) => !hit.has(k + 1));
+    };
+    if (!decisionsOn) return { missing: localMissing() };
     const q = {};
     quiz.questions.forEach((x, i) => {
       if (isShort(x)) q[`ref_${i}`] = { type: 'noul', instructions: `Question ${i + 1} is a short-answer question. Is its reference answer correct?` };
       else { q[`key_${i}`] = { type: 'noul', instructions: `For question ${i + 1}, is the option marked as correct actually correct?` }; q[`one_${i}`] = { type: 'noul', instructions: `For question ${i + 1}, is exactly one option correct (no other option is also correct or arguably correct)?` }; }
+      if (asked.length) q[`rep_${i}`] = { type: 'noul', instructions: `Is question ${i + 1} essentially the same as one of the PREVIOUSLY ASKED questions (same idea and same answer, even if reworded or with different numbers)?` };
     });
+    targets.forEach((t, k) => { q[`cov_${k}`] = { type: 'noul', instructions: `Does at least one question in the NEW QUIZ directly test this: "${t}"?` }; });
     const text = quiz.questions.map((x, i) => (isShort(x) ? `Question ${i + 1} (short answer): ${x.question}\nReference answer: ${x.modelAnswer}` : `Question ${i + 1}: ${x.question}\n${x.choices.map((c, k) => `  ${'ABCDEF'[k]}. ${c}${k === x.answer ? '   <- marked correct' : ''}`).join('\n')}`)).join('\n\n');
     try {
-      const a = await decide([{ type: 'text', text: `Subject: ${nb.name}. Level: ${gradeLabel(nb) || 'general'}.\n\n${text}` }], q);
-      const keep = quiz.questions.filter((x, i) => (isShort(x) ? !(a[`ref_${i}`]?.noul < 0.35) : !(a[`key_${i}`]?.noul < 0.35 || a[`one_${i}`]?.noul < 0.3)));
+      const a = await decide([{ type: 'text', text: `Subject: ${nb.name}. Level: ${gradeLabel(nb) || 'general'}.\n\nNEW QUIZ:\n${text}\n` }, ...(asked.length ? [{ type: 'text', text: `\nPREVIOUSLY ASKED questions:\n${asked.map((x) => `- ${x}`).join('\n')}\n` }] : [])], q);
+      const bad = (x, i) => (isShort(x) ? a[`ref_${i}`]?.noul < 0.35 : a[`key_${i}`]?.noul < 0.35 || a[`one_${i}`]?.noul < 0.3) || a[`rep_${i}`]?.noul >= 0.7;
+      const keep = quiz.questions.filter((x, i) => !bad(x, i));
       const removed = quiz.questions.length - keep.length;
-      if (keep.length >= Math.min(3, quiz.questions.length)) { quiz.questions = keep; quiz.verified = { at: Date.now(), removed }; }
+      if (keep.length >= Math.min(3, quiz.questions.length)) quiz.questions = keep;
+      quiz.verified = { at: Date.now(), removed };
+      return { missing: targets.map((t, k) => k).filter((k) => a[`cov_${k}`] && a[`cov_${k}`].noul < 0.5) };
+    } catch { return { missing: localMissing() }; }
+  }
+  // Write extra questions for anything the quiz didn't cover, check them, and add them.
+  async function topUpQuiz(nb, quiz, items, asked) {
+    try {
+      const existing = quiz.questions.map((x) => oneLine(x.question, 200));
+      const d = await generateJSON(`Write exactly ${items.length} more question${items.length === 1 ? '' : 's'} for my quiz "${quiz.title}", one for each of these:
+${items.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+Return JSON with exactly this shape: {"questions": [{"type": "mc", "question": string, "choices": [4 strings], "answer": number (0-based index of the single correct choice), "explanation": string}]}
+Do not repeat or reword any of these questions:
+${[...existing, ...asked].map((x) => `- ${x}`).join('\n')}`, notebookContext(nb));
+      const extra = normalizeQuiz({ title: quiz.title, questions: d?.questions }, { kind: quiz.kind });
+      if (!extra) return;
+      await verifyQuiz(nb, extra, [], [...existing, ...asked]);
+      const added = extra.questions.slice(0, items.length);
+      quiz.questions.push(...added);
+      quiz.toppedUp = added.length;
     } catch {}
+  }
+  // Pick a quiz difficulty from the learner's recent results (Decisions API; "Just right" otherwise).
+  async function chooseDifficulty(nb, { lessonId }) {
+    if (!decisionsOn) return 'matched';
+    const recent = quizStats(nb).attempts.filter((a) => !lessonId || a.quiz.lessonId === lessonId).slice(0, 6);
+    if (!recent.length && !nb.profile) return 'matched';
+    try {
+      const a = await decide([{ type: 'text', text: `Learner level: ${gradeLabel(nb) || 'not given'}.\n${nb.profile ? profileText(nb.profile) : ''}\nRecent quiz results (newest first): ${recent.map((x) => `${x.score}/${x.total} (${(DIFFICULTIES[x.quiz.difficulty] || 'just right').toLowerCase()})`).join(', ') || 'none'}` }], {
+        difficulty: { type: 'choice', instructions: 'Which difficulty should the next quiz be so it is challenging but achievable for this learner?', criteria: { challenge: 'Harder: they are scoring high and are ready to be stretched.', easier: 'Easier: they are struggling and need to rebuild confidence.', matched: 'Just right: mixed results, keep the same level.' } }
+      });
+      return a.difficulty?.confidence >= 0.5 ? a.difficulty.choice : 'matched';
+    } catch { return 'matched'; }
   }
 
   // Grade a short answer against its rubric.
@@ -1431,16 +1540,20 @@ Adapt it to me: put extra questions on my current gaps (${nb.profile.gaps.slice(
     } catch {}
   }
 
-  // Which plan objectives do the class materials cover? Reads the actual uploaded file when we have it.
+  // Which plan objectives does each class material cover? Reads the actual uploaded file when we have it,
+  // otherwise the saved study notes. One call; each material gets its own coverage list.
   async function coverMaterials(nb, material = null, fileData = null) {
     if (!decisionsOn || !nb.plan) return;
     const objs = allObjectives(nb).slice(0, 400); if (!objs.length) return;
-    const mats = material ? [material] : (nb.materials || []); if (!mats.length) return;
-    const input = material && fileData ? [{ type: 'text', text: `Class material "${material.name}":\n` }, fileData] : [{ type: 'text', text: mats.map((m) => `Class material "${m.title}":\n${m.summary}\nTopics: ${m.topics.join(', ')}`).join('\n\n') }];
+    const mats = (material ? [material] : (nb.materials || [])).slice(0, Math.max(1, Math.floor(1000 / objs.length)));
+    if (!mats.length) return;
+    const input = material && fileData ? [{ type: 'text', text: `Class material M1 ("${material.name}"):\n` }, fileData]
+      : [{ type: 'text', text: mats.map((m, k) => `Class material M${k + 1} ("${m.title}"):\n${m.summary}\nTopics: ${m.topics.join(', ')}`).join('\n\n') }];
+    const q = {};
+    mats.forEach((m, k) => objs.forEach((o, j) => { q[`c${k}_${j}`] = { type: 'noul', instructions: `Does class material M${k + 1} cover or teach this learning objective: "${o.text}" (lesson "${o.lesson.title}")?` }; }));
     try {
-      const a = await decide(input, Object.fromEntries(objs.map((o, j) => [`c${j}`, { type: 'noul', instructions: `Does this class material cover or teach this learning objective: "${o.text}" (lesson "${o.lesson.title}")?` }])));
-      const covered = objs.filter((o, j) => yes(a[`c${j}`], 0.6)).map((o) => `${o.lessonId}:${o.i}`);
-      if (material) material.covers = covered; else nb.materials.forEach((m) => { m.covers = covered; });
+      const a = await decide(input, q);
+      mats.forEach((m, k) => { m.covers = objs.filter((o, j) => yes(a[`c${k}_${j}`], 0.6)).map((o) => `${o.lessonId}:${o.i}`); });
       save(); refreshIf(nb.id);
     } catch {}
   }
@@ -1584,7 +1697,7 @@ Speak to me directly. Use $...$ only for real math.`, notebookContext(nb, chat))
       else {
         const l = lessons[idx], st = lessonState(nb, l), name = `Lesson ${idx + 1}: ${l.title}`;
         if (st.last && st.lastRatio < PASS_RATIO && st.last.a.at > (st.session?.updatedAt || 0)) add(96, '↺', `Go over ${name} again`, `Your last lesson quiz scored ${st.last.a.score}/${st.last.a.total}. Review the mistakes with your tutor, then retake it. You need 70% to complete the lesson.`, { href: `#/nb/${nb.id}/quiz/${st.last.q.id}`, label: 'Review my mistakes' });
-        else if (st.state === 'ready') add(95, '✦', `Take the quiz for ${name}`, `You’ve worked through this lesson${st.tutorReady ? ' and your tutor says you’re ready' : ''}. Pass the quiz (70%+) to complete it.`, { action: 'lesson-quiz', id: l.id, label: 'Take the lesson quiz' });
+        else if (st.state === 'ready') add(95, '✦', `Take the quiz for ${name}`, `You’ve ${decisionsOn ? 'shown every objective in your own words' : `worked through this lesson${st.tutorReady ? ' and your tutor says you’re ready' : ''}`}. Pass the quiz (70%+) to complete it.`, { action: 'lesson-quiz', id: l.id, label: 'Take the lesson quiz' });
         else if (st.state === 'learning') add(90, '✎', `Continue ${name}`, 'Pick up where you left off. Try the practice questions and explain things in your own words. The quiz unlocks once your tutor sees you’ve got it.', { action: 'start-lesson', id: l.id, label: 'Continue lesson' });
         else add(85, '→', `Start ${name}`, l.reason ? `Adapted for you: ${l.reason}` : (l.summary || 'Your next lesson is ready.'), { action: 'start-lesson', id: l.id, label: 'Start lesson' });
       }
@@ -1595,7 +1708,28 @@ Speak to me directly. Use $...$ only for real math.`, notebookContext(nb, chat))
       if (!(nb.materials || []).length) add(40, '📎', 'Add your class materials', 'Upload a syllabus, notes, or a study guide, and your tutor will follow your actual class.', { href: `#/nb/${nb.id}/materials`, label: 'Add materials' });
       if ((nb.updates || []).length >= 4 && (!nb.report || Date.now() - nb.report.at > 7 * DAY)) add(30, '📄', 'Share a progress report', 'A one-page summary for you, a parent, or a teacher.', { href: `#/nb/${nb.id}/report`, label: 'Open report' });
     }
-    return recs.sort((a, b) => b.p - a.p);
+    recs.sort((a, b) => b.p - a.p);
+    recs.forEach((r) => { r.id = r.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 60); });
+    // If the Decisions API has ranked this exact set of options, put its pick first.
+    const sig = recs.map((r) => r.id).join('|'), pick = nb.coachPick;
+    if (pick?.sig === sig) { const k = recs.findIndex((r) => r.id === pick.id); if (k > 0) recs.unshift(...recs.splice(k, 1)); }
+    else if (recs.length >= 2) rankCoach(nb, recs, sig);
+    return recs;
+  }
+  // Ask the Decisions API which recommendation fits this learner's situation best (once per set of options).
+  const coachRanking = {};
+  async function rankCoach(nb, recs, sig) {
+    if (!decisionsOn || coachRanking[nb.id] === sig) return;
+    coachRanking[nb.id] = sig;
+    const p = nbProgress(nb), { attempts } = quizStats(nb), st = streakInfo();
+    const state = { lessonsDone: `${p.done}/${p.total}`, warmupDue: dueMistakes(nb).length, lastStudied: timeAgo(nb.lastStudiedAt), streakDays: st.streak, studiedToday: st.studiedToday,
+      recentQuizzes: attempts.slice(0, 5).map((a) => `${a.quiz.title}: ${a.score}/${a.total}, ${timeAgo(a.at).toLowerCase()}`), gaps: nb.profile?.gaps || [], deadline: nb.deadline || 'none' };
+    try {
+      const a = await decide([{ type: 'text', text: `Learner state:\n${JSON.stringify(state, null, 1)}` }], {
+        next: { type: 'choice', instructions: 'Which ONE next step will help this learner the most right now? Favor finishing what is in progress, reviewing material that is due before it is forgotten, and steady progress toward their goal.', criteria: Object.fromEntries(recs.slice(0, 8).map((r) => [r.id, `${r.title}. ${r.why}`])) }
+      });
+      if (a.next?.confidence >= 0.4) { nb.coachPick = { sig, id: a.next.choice, at: Date.now() }; save(); if ((route.nbId === nb.id && route.view === 'nb-overview') || route.view === 'home') render(true); }
+    } catch {}
   }
   function recButton(r, cls = 'btn-primary') {
     const b = r.btn;
@@ -1694,18 +1828,22 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
       const d = await generateJSON(prompt, '', [{ name: data.name, type: data.type, data: data.data, size: data.size }]);
       const summary = str(d?.summary, 1800); if (!summary) throw new Error('Your tutor could not read that file. Try a clearer photo, a PDF, or a text file.');
       (nb.materials ||= []).unshift({ id: uid(), name: file.name, type: file.type, title: str(d.title, 100) || file.name, summary, topics: listOf(d.topics, 8, 80), at: Date.now(), covers: [] });
-      nb.updatedAt = Date.now(); save(); toast('Got it. Your tutor will use this material from now on.');
-      const block = fileBlock(data); if (block) coverMaterials(nb, nb.materials[0], block);
+      nb.updatedAt = Date.now(); save();
+      const material = nb.materials[0], block = fileBlock(data);
+      if (block) await coverMaterials(nb, material, block);
+      if (nb.plan) { toast('Got it. Now adapting your plan to your class…'); adaptAfter(nb, { type: 'material', material }); }
+      else toast('Got it. Your tutor will use this material, and your plan will be built around it.');
     } catch (e) { jobErrors[key] = e.message; toast(e.message); }
     finally { delete jobs[key]; refreshIf(nb.id); }
   }
   function viewMaterials(nb) {
     const key = `material:${nb.id}`, mats = nb.materials || [];
     el.view.innerHTML = `<div class="page narrow">
-      <header class="page-hero"><span class="eyebrow">Class materials</span><h1>Teach it <em>your class’s</em> way</h1><p class="lead">Upload a syllabus, class notes, slides, or a study guide (photo, PDF, or text, up to 1 MB). Your tutor turns it into study notes and follows your class’s terms, order, and emphasis in every session, quiz, and plan update.</p></header>
+      <header class="page-hero"><span class="eyebrow">Class materials</span><h1>Teach it <em>your class’s</em> way</h1><p class="lead">Upload a syllabus, class notes, slides, or a study guide (photo, PDF, or text, up to 1 MB). Your tutor turns it into study notes, adapts your learning plan to follow your class, and uses its terms, order, and emphasis in every session and quiz.</p></header>
       <div class="upload-zone${jobs[key] ? ' working' : ''}">${jobs[key] ? `<span class="spinner"></span><div><strong>Reading ${esc(jobs[key])}…</strong><p>This usually takes 10–30 seconds.</p></div>` : '<span class="upload-icon" aria-hidden="true">📎</span><div><strong>Add class material</strong><p>Images, PDFs, or text files.</p></div><button type="button" class="btn btn-primary" data-action="upload-material">Choose a file</button>'}</div>
       ${jobErrors[key] ? `<p class="error-text">${esc(jobErrors[key])}</p>` : ''}
-      ${mats.length && nb.plan ? '<div class="adapt-banner"><span class="adapt-icon">💡</span><div><strong>I recommend rebuilding your plan around your class</strong><p>Your tutor already uses these notes, but a fresh plan will follow your class’s order. Completed lessons keep their status.</p><button type="button" class="btn btn-soft btn-sm" data-action="regenerate-plan">Rebuild my plan</button></div></div>' : ''}
+      ${(() => { const m = mats[0]; if (!m || !nb.plan) return ''; if (jobs[`matadapt:${m.id}`]) return `<div class="adapt-banner working"><span class="spinner sm"></span><div><strong>Adapting your plan to “${esc(m.title)}”…</strong><p>Matching your lessons to your class’s order, terms, and topics.</p></div></div>`;
+        const ad = m.adaptation; if (!ad) return ''; return `<div class="adapt-banner"><span class="adapt-icon" aria-hidden="true">🔄</span><div><strong>${ad.planChanged ? 'Your plan now follows your class' : 'Your plan already matches your class'}</strong><p>${mdInline(ad.planNote || ad.summary)}</p>${ad.planChanged ? `<a class="btn btn-soft btn-sm" href="#/nb/${nb.id}/plan">See the updated plan →</a>` : ''}</div></div>`; })()}
       <div class="materials">${mats.map((m) => `<details class="material card"><summary><span class="mat-icon">${m.type.startsWith('image/') ? '🖼' : m.type === 'application/pdf' ? '📕' : '📄'}</span><span><strong>${esc(m.title)}</strong><small>${esc(m.name)} · ${timeAgo(m.at)}</small></span><button type="button" class="sb-icon danger" data-action="delete-material" data-id="${m.id}" aria-label="Remove material">×</button></summary>
         ${m.covers?.length && nb.plan ? `<p class="mat-cover">📎 Covers ${plural(m.covers.length, 'objective')} in your plan</p>` : ''}${m.topics.length ? `<div class="mat-topics">${m.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}<div class="md">${md(m.summary)}</div></details>`).join('')}</div></div>`;
   }
@@ -1828,9 +1966,9 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
     'lesson-quiz': (t) => {
       const nb = nbFrom(t); const l = nb?.plan?.lessons.find((x) => x.id === t.dataset.id); if (!nb || !l) return;
       if (!l.done && !lessonState(nb, l).ready) { toast('The lesson quiz unlocks once your tutor sees you’ve understood the lesson. Keep going in the lesson!'); return; }
-      generateQuiz(nb, { lessonId: l.id, count: 5, difficulty: 'matched', kind: 'quiz' });
+      generateQuiz(nb, { lessonId: l.id, count: Math.max(5, l.objectives.length + 2), difficulty: 'auto', kind: 'quiz' });
     },
-    'quick-quiz': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: Number(t.dataset.count) || 5, difficulty: 'matched', kind: 'quiz' }); },
+    'quick-quiz': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: Number(t.dataset.count) || 5, difficulty: 'auto', kind: 'quiz' }); },
     diagnostic: (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'diagnostic' }); },
     'final-check': (t) => { const nb = nbFrom(t); if (nb) generateQuiz(nb, { lessonId: '', count: 8, difficulty: 'matched', kind: 'final' }); },
     warmup: (t) => { markUsed('warmup'); const nb = nbFrom(t); if (nb) startWarmup(nb); },
@@ -1855,7 +1993,7 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.progress || quiz.progress.revealed) return;
       quiz.progress.pending = Number(t.dataset.index); save();
       document.querySelectorAll('.choice').forEach((c) => { const on = Number(c.dataset.index) === quiz.progress.pending; c.classList.toggle('selected', on); c.setAttribute('aria-pressed', String(on)); });
-      const panel = $('.confidence'); panel.classList.add('show'); panel.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      const panel = $('.confidence'); if (panel) { panel.classList.add('show'); panel.querySelectorAll('button').forEach((b) => { b.disabled = false; }); }
     },
     confidence: (t) => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); const pr = quiz?.progress;
@@ -1903,7 +2041,12 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
       if (quiz.progress.answers.length >= quiz.questions.length) { finishQuiz(nb, quiz); return; }
       save(); render(true);
     },
-    'retake-quiz': () => { const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz) return; quiz.progress = { answers: [], confidence: [], revealed: false }; save(); render(true); },
+    'retake-quiz': () => {
+      const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz) return;
+      const l = quiz.lessonId && nb.plan?.lessons.find((x) => x.id === quiz.lessonId);
+      if (l && !l.done && !lessonState(nb, l).ready) { toast('The lesson quiz unlocks once your tutor sees you’ve understood the lesson.'); return; }
+      generateQuiz(nb, { kind: quiz.kind, lessonId: quiz.lessonId || '', difficulty: 'auto', count: quiz.count || Math.max(5, quiz.questions.length) });
+    },
     'review-mistakes': () => {
       const nb = currentNb(), quiz = nb?.quizzes.find((q) => q.id === route.quizId); if (!quiz?.attempts.length) return;
       const a = quiz.attempts[quiz.attempts.length - 1];
@@ -1981,7 +2124,7 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
       e.preventDefault();
       const nb = currentNb(); if (!nb) return;
       const f = new FormData(form), scope = String(f.get('scope') || '');
-      generateQuiz(nb, { kind: ['diagnostic', 'final'].includes(scope) ? scope : 'quiz', lessonId: ['diagnostic', 'final'].includes(scope) ? '' : scope, count: Number(f.get('count')) || 8, difficulty: String(f.get('difficulty') || 'matched') });
+      generateQuiz(nb, { kind: ['diagnostic', 'final'].includes(scope) ? scope : 'quiz', lessonId: ['diagnostic', 'final'].includes(scope) ? '' : scope, count: Number(f.get('count')) || 8, difficulty: String(f.get('difficulty') || 'auto') });
     }
   });
 
@@ -2023,12 +2166,13 @@ Return JSON with exactly this shape: {"title": string (short name for this mater
   const AUTO_CREATED = ['Math & Numbers', 'Science & Nature', 'Writing & Language', 'History & Society'];
   const unused = (nb) => AUTO_CREATED.includes(nb.name) && !nb.goal && !nb.struggles && !nb.plan && !nb.quizzes.length && !chats.some((c) => c.notebookId === nb.id);
   if (notebooks.some(unused)) { notebooks = notebooks.filter((nb) => !unused(nb)); save(); }
-  applyFont(load(KEYS.font, null) || localStorage.getItem(KEYS.font) || 'rounded');
+  applyFont(localStorage.getItem(KEYS.font) || 'rounded');
   // Find out whether decision checks are available, then catch up on sessions that ended without analysis.
+  const wasOn = decisionsOn;
   checkDecisions().then(() => {
     const stale = chats.filter((c) => c.notebookId && !c.lessonId && Date.now() - c.updatedAt > 10 * 60000 && c.messages.filter((m) => m.role === 'user').length - (c.analyzedN || 0) >= 2).slice(0, 2);
     stale.forEach((c) => analyzeSession(findNb(c.notebookId), c));
-    if (route.view === 'quiz' || route.view === 'nb-quizzes') render(true);
+    if (decisionsOn !== wasOn) { if (route.view === 'chat') { const c = chats.find((x) => x.id === route.chatId); if (c) refreshLessonBanner(c); } else render(true); }
   });
   render(true);
 })();
